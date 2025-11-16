@@ -2,7 +2,9 @@
 Simple drag-and-drop launcher for ASE GUI.
 
 Usage:
-  python3 ase_dragdrop_gui.py
+  python3 ase/ase_dragdrop_gui.py
+or
+  python -m ase.ase_dragdrop_gui
 Drop one or more structure files onto the window to open them in ASE GUI
 (each file will be opened by launching: python -m ase.gui <file>).
 """

@@ -135,7 +135,7 @@ class View:
     def set_frame(self, frame=None, focus=False):
         if frame is None:
             frame = self.frame
-        assert frame < len(self.images)
+        assert frame < len(self.images), f"Frame {frame} >= len(images) {len(self.images)}"
         self.frame = frame
         self.set_atoms(self.images[frame])
 

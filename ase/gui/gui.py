@@ -37,7 +37,8 @@ class GUI(View):
 
     def __init__(self, images=None,
                  rotations='',
-                 show_bonds=False, expr=None):
+                 show_bonds=False, expr=None,
+                 workspace_dir=None):
 
         if not isinstance(images, Images):
             images = Images(images)
@@ -52,6 +53,12 @@ class GUI(View):
         if show_bonds:
             self.config['show_bonds'] = True
 
+        # Workspace mode setup
+        self.workspace_mode = workspace_dir is not None
+        self.workspace_dir = workspace_dir
+        self.workspace_controller = None
+        self.file_explorer = None
+
         menu = self.get_menu_data()
 
         self.window = ui.ASEGUIWindow(close=self.exit, menu=menu,
@@ -60,7 +67,8 @@ class GUI(View):
                                       press=self.press, move=self.move,
                                       release=self.release,
                                       resize=self.resize,
-                                      open_callback=self.open)
+                                      open_callback=self.open,
+                                      workspace_mode=self.workspace_mode)
 
         super().__init__(rotations)
         self.status = Status(self)
@@ -80,7 +88,23 @@ class GUI(View):
         self.arrowkey_mode = self.ARROWKEY_SCAN
         self.move_atoms_mask = None
 
+        # Tabs initialization - must be done before workspace initialization
+        self.tabs = {}  # Dictionary to store tabs and their associated Images
+        self.current_tab = None  # Track the currently active tab
+
+        # Add a tab control to the GUI
+        self.tab_control = ui.TabControl(self.window.win, self.switch_tab)
+        self.tab_control.pack(side='top', fill='x')
+
+        self.tab_view_settings = {}  # Store view settings for each tab
+        self.tab_selection_state = {}  # Store selection state for each tab
+
         self.set_frame(len(self.images) - 1, focus=True)
+
+        # Initialize workspace mode if directory provided
+        # This must come after set_frame which initializes scale, center, axes etc.
+        if self.workspace_mode:
+            self._initialize_workspace()
 
         # Used to move the structure with the mouse
         self.prev_pos = None
@@ -95,21 +119,6 @@ class GUI(View):
 
         if expr is not None and expr != '' and len(self.images) > 1:
             self.plot_graphs(expr=expr, ignore_if_nan=True)
-
-        # Tabs initialization
-        self.tabs = {}  # Dictionary to store tabs and their associated Images
-        self.current_tab = None  # Track the currently active tab
-
-        # Add a tab control to the GUI
-        self.tab_control = ui.TabControl(self.window.win, self.switch_tab)
-        self.tab_control.pack(side='top', fill='x')
-
-        # Do not create any initial tab
-        self.images = None  # No images loaded initially
-        self.current_tab = None
-
-        self.tab_view_settings = {}  # Store view settings for each tab
-        self.tab_selection_state = {}  # Store selection state for each tab
 
         # Pan mode state: when True, canvas cursor becomes a 4-spoked
         # "move" cursor (Tk 'fleur') and user can drag to pan.
@@ -195,10 +204,10 @@ class GUI(View):
         use_small_step = bool(event.state & shift)
         rotate_into_plane = bool(event.state & (ctrl | alt_l | mac_option_key))
 
-        # When we're moving atoms, prefer in-plane movement: do not
-        # interpret Up/Down as rotate-into-plane. Only allow
-        # rotate_into_plane when in ROTATE arrowkey mode.
-        if self.arrowkey_mode != self.ARROWKEY_ROTATE:
+        # When rotating atoms with arrow keys, we want standard 2D arrow directions
+        # not rotate-into-plane behavior. Disable rotate_into_plane in ROTATE mode.
+        # Only use rotate_into_plane for view panning (SCAN mode).
+        if self.arrowkey_mode == self.ARROWKEY_ROTATE or self.arrowkey_mode == self.ARROWKEY_MOVE:
             rotate_into_plane = False
 
         # Normalize key names: handle common variants like 'KP_Up',
@@ -264,7 +273,15 @@ class GUI(View):
                 center = self.atoms.positions[mask].mean(axis=0)
                 tmp_atoms = self.atoms[mask]
                 tmp_atoms.positions -= center
-                tmp_atoms.rotate(50 * np.linalg.norm(vec), vec)
+                # Rotate around axis perpendicular to arrow direction in screen space
+                # For intuitive rotation: up/down arrows rotate around horizontal axis,
+                # left/right arrows rotate around vertical axis
+                # Cross vec with screen Z-axis to get perpendicular rotation axis
+                screen_z = np.dot(self.axes, [0, 0, 1])
+                rotation_axis = np.cross(vec, screen_z)
+                rotation_angle = 50 * np.linalg.norm(vec)
+                if np.linalg.norm(rotation_axis) > 1e-10:
+                    tmp_atoms.rotate(rotation_angle, rotation_axis)
                 self.atoms.positions[mask] = tmp_atoms.positions + center
             self.set_frame()
         else:
@@ -338,6 +355,11 @@ class GUI(View):
         g = Graphs(self)
         if expr is not None:
             g.plot(expr=expr, ignore_if_nan=ignore_if_nan)
+    
+    def plot_dos_window(self, key=None):
+        """Open DOS plotting window."""
+        from ase.gui.dos_plot import dos_plot_window
+        dos_plot_window(self)
 
     def pipe(self, task, data):
         process = subprocess.Popen([sys.executable, '-m', 'ase.gui.pipe'],
@@ -697,9 +719,49 @@ class GUI(View):
         self.obs.new_atoms.notify()
 
     def exit(self, event=None):
+        # Clean up workspace resources
+        if self.workspace_mode and self.workspace_controller:
+            self.workspace_controller.close_all_viewers()
+        
         for process in self.subprocesses:
             process.terminate()
         self.window.close()
+
+    def _initialize_workspace(self):
+        """Initialize workspace mode with file explorer and controller."""
+        from ase.gui.file_explorer import FileExplorer
+        from ase.gui.workspace import WorkspaceController
+        from pathlib import Path
+        
+        # Create workspace controller
+        self.workspace_controller = WorkspaceController(self, self.workspace_dir)
+        
+        # Create file explorer in sidebar
+        if self.window.sidebar_frame:
+            self.file_explorer = FileExplorer(
+                self.window.sidebar_frame,
+                self.workspace_dir,
+                callback=self.workspace_controller.handle_file_selection
+            )
+            self.file_explorer.pack(fill='both', expand=True)
+            
+            # Update window title
+            workspace_name = Path(self.workspace_dir).name
+            self.window.win.title(f'ASE-GUI - Workspace: {workspace_name}')
+            
+            # Create an initial "Welcome" tab with empty structure
+            # This ensures the tab system is initialized properly
+            welcome_tab_id = self.tab_control.add_tab('Welcome', filepath='workspace')
+            self.tabs[welcome_tab_id] = self.images
+            self.current_tab = welcome_tab_id
+            
+            # Initialize view settings for the welcome tab
+            self.tab_view_settings[welcome_tab_id] = {
+                'scale': self.scale,
+                'center': self.center.copy(),
+                'axes': self.axes.copy()
+            }
+            self.tab_selection_state[welcome_tab_id] = self.images.selected.copy()
 
     def new(self, key=None):
         subprocess.Popen([sys.executable, '-m', 'ase', 'gui'])
@@ -975,6 +1037,7 @@ class GUI(View):
             (_('_Tools'),
              [M(_('Graphs ...'), self.plot_graphs),
               M(_('Movie ...'), self.movie),
+              M(_('Plot DOS ...'), self.plot_dos_window),
               M(_('Constraints ...'), self.constraints_window),
               M(_('Render scene ...'), self.render_window),
               M(_('_Move selected atoms'), self.toggle_move_mode, 'Ctrl+M'),

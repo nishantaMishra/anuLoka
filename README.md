@@ -1,3 +1,5 @@
+# AnuLok: the world of molecules
+
 Basically, edited codes of ase gui. 
 
 While development execute
@@ -18,10 +20,14 @@ Added features:
 - Support for XDATCAR.
 - Axes gizmo: Alignment of structure by clicking the axes.
 - Ctrl+W to close tab.
+- PDOS toolbar button to plot PDOS.
+- Opening directories in workspace mode.
+- Drag and drop files to open them.
+
 
 # Known Issues
-1. `ase_dragdrop_gui.py` could be moved inside the directory.
+1. `ase/ase_dragdrop_gui.py` has been moved into the `ase/` package.
 
 # To do
-1. Make colour schemes work. Add interactive colour changing.
-
+- Better UI or DOS popup window. Selection of suborbitals is still kind of confusing. Now way to know if any suborbital is selected or not.
+- Clicking tab should the option to close it.

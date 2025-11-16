@@ -609,7 +609,8 @@ class ASEGUIWindow(MainWindow):
     def __init__(self, close, menu, config,
                  scroll, scroll_event,
                  press, move, release, resize,
-                 open_callback=None):
+                 open_callback=None,
+                 workspace_mode=False):
         super().__init__('ASE-GUI', close, menu)
 
         self.size = np.array([450, 450])
@@ -617,17 +618,49 @@ class ASEGUIWindow(MainWindow):
         self.fg = config['gui_foreground_color']
         self.bg = config['gui_background_color']
 
-        self.canvas = tk.Canvas(self.win,
-                                width=self.size[0],
-                                height=self.size[1],
-                                bg=self.bg,
-                                highlightthickness=0)
-        self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
         # Optional callback invoked when files are dropped. The GUI
         # (ase.gui.gui.GUI) will pass its `open` method here so drops
         # can open files directly in the running GUI.
         self.open_callback = open_callback
+
+        # Workspace mode flag and sidebar reference
+        self.workspace_mode = workspace_mode
+        self.sidebar_frame = None
+        self.paned_window = None
+
+        # If workspace mode, create a PanedWindow for sidebar layout
+        if workspace_mode:
+            # Create PanedWindow to hold sidebar and canvas
+            self.paned_window = tk.PanedWindow(
+                self.win,
+                orient=tk.HORIZONTAL,
+                sashwidth=5,
+                sashrelief=tk.RAISED
+            )
+            self.paned_window.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+            # Create sidebar frame (will be populated by GUI)
+            self.sidebar_frame = tk.Frame(self.paned_window, width=250)
+            self.paned_window.add(self.sidebar_frame, minsize=200)
+
+            # Create canvas frame
+            canvas_frame = tk.Frame(self.paned_window)
+            self.paned_window.add(canvas_frame, minsize=300)
+
+            self.canvas = tk.Canvas(canvas_frame,
+                                    width=self.size[0],
+                                    height=self.size[1],
+                                    bg=self.bg,
+                                    highlightthickness=0)
+            self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        else:
+            # Original layout without sidebar
+            self.canvas = tk.Canvas(self.win,
+                                    width=self.size[0],
+                                    height=self.size[1],
+                                    bg=self.bg,
+                                    highlightthickness=0)
+            self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         # Create status label early so we can report DnD availability.
         self.status = tk.Label(self.win, text='', anchor=tk.W)

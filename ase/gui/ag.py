@@ -61,14 +61,32 @@ class CLICommand:
 
     @staticmethod
     def run(args):
+        import os
+        from pathlib import Path
         from ase.atoms import Atoms
         from ase.gui.images import Images
+        from ase.gui.gui import GUI
 
-        images = Images()
-
-        if args.filenames:
+        # Check if a single directory was provided
+        workspace_dir = None
+        if len(args.filenames) == 1:
+            path = Path(args.filenames[0])
+            if path.is_dir():
+                workspace_dir = str(path.resolve())
+                # Initialize with empty atoms for workspace mode
+                images = Images()
+                images.initialize([Atoms()])
+            else:
+                # Single file, proceed normally
+                images = Images()
+                images.read(args.filenames, args.image_number)
+        elif args.filenames:
+            # Multiple files, proceed normally
+            images = Images()
             images.read(args.filenames, args.image_number)
         else:
+            # No arguments, empty GUI
+            images = Images()
             images.initialize([Atoms()])
 
         if args.interpolate:
@@ -96,14 +114,12 @@ class CLICommand:
                         print(x, end=' ')
                     print()
         else:
-            import os
-
-            from ase.gui.gui import GUI
-
             backend = os.environ.get('MPLBACKEND', '')
             if backend == 'module://ipykernel.pylab.backend_inline':
                 # Jupyter should not steal our windows
                 del os.environ['MPLBACKEND']
 
-            gui = GUI(images, args.rotations, args.bonds, args.graph)
+            # Create GUI with workspace_dir if directory was provided
+            gui = GUI(images, args.rotations, args.bonds, args.graph, 
+                     workspace_dir=workspace_dir)
             gui.run()
