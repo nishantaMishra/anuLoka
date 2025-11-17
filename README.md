@@ -1,16 +1,21 @@
-# AnuLok: the world of molecules
+# Aṇu Loka: the world of molecules
 
-Basically, edited codes of ase gui. 
+A GUI for visualizing and manipulating atomic structures using the Atomic Simulation Environment (ASE) library.
 
-While development execute
-```bash
-python3 -m ase gui
+
+## Installation
+```git clone https://github.com/nishantaMishra/anuLoka.git
+cd anuLoka
 ```
 
-Execute the command in the project directory to open the GUI.
+## Execution
+```bash
+python3 -m ase gui 
+python3 -m ase -T gui /path/to/your/directory/or/file.  
+```
 
 
-Added features:
+# Added features:
 - Multiple tabs support
 - Opens native file browser dialogs for loading and saving files.
 - Presets for view configurations. I, J and K.
@@ -20,7 +25,7 @@ Added features:
 - Support for XDATCAR.
 - Axes gizmo: Alignment of structure by clicking the axes.
 - Ctrl+W to close tab.
-- DOS toolbar button to plot DOS. (expects vaspkit installation)
+- DOS toolbar button to plot DOS. (expects native vaspkit installation)
 - Opening directories in workspace mode.
 - Drag and drop files to open them.
 
