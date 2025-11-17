@@ -3,3 +3,35 @@ IMPLEMENTATION_SUMMARY.md
 QUICK_REFERENCE.md
 WORKSPACE_COMPLETE.md
 WORKSPACE_MODE_README.md
+
+# Python-related files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+
+# IDE/Editor configurations
+.vscode/
+.idea/
+*.sublime-*
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Dependency files
+node_modules/
+*.lock
