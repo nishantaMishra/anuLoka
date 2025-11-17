@@ -4,7 +4,8 @@ A GUI for visualizing and manipulating atomic structures using the Atomic Simula
 
 
 ## Installation
-```git clone https://github.com/nishantaMishra/anuLoka.git
+```bash
+git clone https://github.com/nishantaMishra/anuLoka.git
 cd anuLoka
 ```
 
