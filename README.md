@@ -33,3 +33,4 @@ python3 -m ase -T gui /path/to/your/directory/or/file.
 # To do
 - Better UI or DOS popup window. Selection of suborbitals is still kind of confusing. Now way to know if any suborbital is selected or not.
 - Clicking tab should the option to close it. 
+- Band structure plots.
