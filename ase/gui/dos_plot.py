@@ -458,9 +458,15 @@ class DOSPlotter:
         
         # Create spinboxes with unique instances to avoid any potential sharing
         # These are created separately first to ensure each has its own state
-        self.title_fontsize = ui.SpinBox(14, 8, 30, 1, width=8)
-        self.xlabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=8)
-        self.ylabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=8)
+        self.title_fontsize = ui.SpinBox(14, 8, 30, 1, width=4)
+        self.xlabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=3)
+        self.ylabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=3)
+        
+        # Create spinboxes for xlim and ylim
+        self.xlim_min = ui.SpinBox(-20, -100, 100, 1, width=4)
+        self.xlim_max = ui.SpinBox(20, -100, 100, 1, width=4)
+        self.ylim_min = ui.SpinBox(0, -100, 1000, 1, width=4)
+        self.ylim_max = ui.SpinBox(100, -100, 1000, 1, width=4)
         
         # Store initial values separately to avoid any mixing
         title_fs_initial = '14'
@@ -470,22 +476,85 @@ class DOSPlotter:
         # Title row
         self.show_title_check = ui.CheckButton(_('Title:'), True, None)
         self.title_entry = ui.Entry(default_title, width=35)
-        title_fs_label = ui.Label(f'Font (14):')
-        self.win.add([self.show_title_check, self.title_entry, title_fs_label, self.title_fontsize])
+        self.win.add([self.show_title_check, self.title_entry, self.title_fontsize])
         
         # X-axis row
         self.show_xlabel_check = ui.CheckButton(_('X-axis:'), True, None)
-        self.xlabel_entry = ui.Entry('Energy (eV)', width=35)
-        xlabel_fs_label = ui.Label(f'Font (12):')
-        self.win.add([self.show_xlabel_check, self.xlabel_entry, xlabel_fs_label, self.xlabel_fontsize])
+        self.xlabel_entry = ui.Entry('Energy (eV)', width=17)
+        xlim_label = ui.Label('  xlim:')
+        self.win.add([self.show_xlabel_check, self.xlabel_entry, self.xlabel_fontsize, xlim_label, self.xlim_min, self.xlim_max])
         
         # Y-axis row
         self.show_ylabel_check = ui.CheckButton(_('Y-axis:'), True, None)
-        self.ylabel_entry = ui.Entry('Density of States', width=35)
-        ylabel_fs_label = ui.Label(f'Font (12):')
-        self.win.add([self.show_ylabel_check, self.ylabel_entry, ylabel_fs_label, self.ylabel_fontsize])
+        self.ylabel_entry = ui.Entry('Density of States', width=17)
+        ylim_label = ui.Label('  ylim:')
+        self.win.add([self.show_ylabel_check, self.ylabel_entry, self.ylabel_fontsize, ylim_label, self.ylim_min, self.ylim_max])
         
         self.win.add(_(''))  # Empty line separator
+        
+        # Attach tooltips to font size spinboxes after widgets are created
+        if hasattr(self.win, 'win'):
+            self.win.win.after(100, self._attach_fontsize_tooltips)
+    
+    def _attach_fontsize_tooltips(self):
+        """Attach tooltips to font size spinboxes after widgets are created."""
+        try:
+            # Bind tooltip to title fontsize spinbox
+            if hasattr(self.title_fontsize, 'widget'):
+                self.title_fontsize.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Font size'))
+                self.title_fontsize.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+            
+            # Bind tooltip to xlabel fontsize spinbox
+            if hasattr(self.xlabel_fontsize, 'widget'):
+                self.xlabel_fontsize.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Font size'))
+                self.xlabel_fontsize.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+            
+            # Bind tooltip to ylabel fontsize spinbox
+            if hasattr(self.ylabel_fontsize, 'widget'):
+                self.ylabel_fontsize.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Font size'))
+                self.ylabel_fontsize.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+            
+            # Bind tooltips to xlim spinboxes
+            if hasattr(self.xlim_min, 'widget'):
+                self.xlim_min.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'X-axis minimum'))
+                self.xlim_min.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+            
+            if hasattr(self.xlim_max, 'widget'):
+                self.xlim_max.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'X-axis maximum'))
+                self.xlim_max.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+            
+            # Bind tooltips to ylim spinboxes
+            if hasattr(self.ylim_min, 'widget'):
+                self.ylim_min.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Y-axis minimum'))
+                self.ylim_min.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+            
+            if hasattr(self.ylim_max, 'widget'):
+                self.ylim_max.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Y-axis maximum'))
+                self.ylim_max.widget.bind('<Leave>', lambda e: self._hide_tooltip())
+        except Exception as e:
+            print(f"DEBUG: Could not attach fontsize tooltips: {e}")
+    
+    def _show_tooltip(self, event, text):
+        """Show tooltip on hover."""
+        try:
+            import tkinter as tk
+            self.tooltip = tk.Toplevel()
+            self.tooltip.wm_overrideredirect(True)
+            self.tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            label = tk.Label(self.tooltip, text=text, background="#ffffe0", 
+                           relief='solid', borderwidth=1, padx=5, pady=2)
+            label.pack()
+        except:
+            pass
+    
+    def _hide_tooltip(self):
+        """Hide tooltip."""
+        try:
+            if hasattr(self, 'tooltip'):
+                self.tooltip.destroy()
+                del self.tooltip
+        except:
+            pass
     
     def browse_directory(self):
         """Open directory browser."""
@@ -603,6 +672,28 @@ class DOSPlotter:
         xlabel_fontsize = self.xlabel_fontsize.value
         ylabel_fontsize = self.ylabel_fontsize.value
         
+        # Get xlim and ylim from spinboxes
+        xlim_min_val = self.xlim_min.value
+        xlim_max_val = self.xlim_max.value
+        ylim_min_val = self.ylim_min.value
+        ylim_max_val = self.ylim_max.value
+        
+        # Only apply xlim if values are different from defaults or if max > min
+        xlim = None
+        if xlim_min_val < xlim_max_val:
+            xlim = (xlim_min_val, xlim_max_val)
+        elif xlim_min_val >= xlim_max_val:
+            ui.showerror(_('Error'), _('xlim: minimum must be less than maximum'))
+            return
+        
+        # Only apply ylim if values are different from defaults or if max > min
+        ylim = None
+        if ylim_min_val < ylim_max_val:
+            ylim = (ylim_min_val, ylim_max_val)
+        elif ylim_min_val >= ylim_max_val:
+            ui.showerror(_('Error'), _('ylim: minimum must be less than maximum'))
+            return
+        
         location = self.location.value.strip()
         
         # Plot
@@ -613,7 +704,8 @@ class DOSPlotter:
                           xlabel=xlabel, ylabel=ylabel, 
                           title_fontsize=title_fontsize, 
                           xlabel_fontsize=xlabel_fontsize, 
-                          ylabel_fontsize=ylabel_fontsize)
+                          ylabel_fontsize=ylabel_fontsize,
+                          xlim=xlim, ylim=ylim)
         except Exception as e:
             ui.showerror(_('Error'), 
                         _('Error plotting DOS:\n\n') + str(e))

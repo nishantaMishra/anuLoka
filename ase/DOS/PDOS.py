@@ -474,7 +474,7 @@ def read_tdos_from_hdf5(location):
         print(f"Warning: Could not read TDOS from vaspout.h5: {e}")
         return None, None, None
 
-def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, location=None, fill_colors=None, cutoff=None, show_grid=False, show_ylabel=False, xlabel='Energy (eV)', ylabel='Density of States', title_fontsize=14, xlabel_fontsize=12, ylabel_fontsize=12):
+def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, location=None, fill_colors=None, cutoff=None, show_grid=False, show_ylabel=False, xlabel='Energy (eV)', ylabel='Density of States', title_fontsize=14, xlabel_fontsize=12, ylabel_fontsize=12, xlim=None, ylim=None):
     colors = plt.cm.tab10.colors
     linestyles = ['-', '--', '-.', ':']
     element_color_map = {}
@@ -585,6 +585,13 @@ def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, lo
         plt.grid(True, alpha=0.3)
     if not show_ylabel:
         plt.gca().set_yticks([])
+    
+    # Apply xlim and ylim if specified
+    if xlim is not None:
+        plt.xlim(xlim)
+    if ylim is not None:
+        plt.ylim(ylim)
+    
     plt.show()
 
 def parse_color_input(color_str):
