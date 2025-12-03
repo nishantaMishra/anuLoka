@@ -265,7 +265,27 @@ class DOSPlotter:
         if hasattr(self.win, 'win'):
             self.win.win.after(100, self._attach_all_context_menus)
         
-        # Color scheme selection
+        # Options section (moved above color scheme)
+        self.win.add(_('\nOptions:'))
+        
+        # Spin filter
+        self.spin_var = ui.RadioButtons(['Both', 'Up', 'Down'], 
+                                        ['both', 'up', 'down'], 
+                                        None)
+        self.spin_var.value = 'both'
+        self.win.add([ui.Label(_('Spin:')), self.spin_var])
+        
+        # Fill and grid options
+        self.fill_check = ui.CheckButton(_('Fill under curves'), False, None)
+        self.grid_check = ui.CheckButton(_('Show grid'), False, None)
+        self.win.add([self.fill_check, self.grid_check])
+        
+        # Cutoff
+        self.win.add(_('DOS Cutoff (optional):'))
+        self.cutoff_entry = ui.Entry('', width=20)
+        self.win.add(self.cutoff_entry)
+        
+        # Color scheme selection (moved below options)
         self.win.add(_('\nColor Scheme:'))
         print(f"DEBUG: Color schemes available: {self.color_schemes}")
         color_options = self.color_schemes
@@ -427,26 +447,6 @@ class DOSPlotter:
     
     def _add_options_and_customization(self):
         """Add options and plot customization sections."""
-        # Options section
-        self.win.add(_('\nOptions:'))
-        
-        # Spin filter
-        self.spin_var = ui.RadioButtons(['Both', 'Up', 'Down'], 
-                                        ['both', 'up', 'down'], 
-                                        None)
-        self.spin_var.value = 'both'
-        self.win.add([ui.Label(_('Spin:')), self.spin_var])
-        
-        # Fill and grid options
-        self.fill_check = ui.CheckButton(_('Fill under curves'), False, None)
-        self.grid_check = ui.CheckButton(_('Show grid'), False, None)
-        self.win.add([self.fill_check, self.grid_check])
-        
-        # Cutoff
-        self.win.add(_('DOS Cutoff (optional):'))
-        self.cutoff_entry = ui.Entry('', width=20)
-        self.win.add(self.cutoff_entry)
-        
         # Plot customization section
         self.win.add(_('\nPlot Customization:'))
         

@@ -8,6 +8,14 @@ git clone https://github.com/nishantaMishra/anuLoka.git
 cd anuLoka
 ```
 
+## Dependencies
+```bash
+- Python 3.x
+- tkinter # python3-tk (Debian/Ubuntu) or python-tkinter (Arch/Fedora)
+- numpy # pip install numpy
+- scipy # pip install scipy
+```
+
 ## Execution
 ```bash
 python3 -m ase gui 
