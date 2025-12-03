@@ -14,6 +14,7 @@ cd anuLoka
 - tkinter # python3-tk (Debian/Ubuntu) or python-tkinter (Arch/Fedora)
 - numpy # pip install numpy
 - scipy # pip install scipy
+- vaspkit (for DOS plotting) # Follow instructions at https://vaspkit.com/
 ```
 
 ## Execution
