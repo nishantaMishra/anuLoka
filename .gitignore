@@ -28,8 +28,8 @@ Thumbs.db
 *.log
 *.tmp
 
-# Build artifacts
-build/
+# Build artifacts (only at root level, not ase/build/)
+/build/
 dist/
 *.egg-info/
 
