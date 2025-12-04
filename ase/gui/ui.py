@@ -672,6 +672,7 @@ class ASEGUIWindow(MainWindow):
         # Tcl 'tkdnd' package. If neither is available, we leave DnD
         # disabled but show a short hint in the status line.
         dnd_enabled = False
+        dnd_error = None
         try:
             from tkinterdnd2 import DND_FILES
             if hasattr(self.canvas, 'drop_target_register'):
@@ -681,16 +682,20 @@ class ASEGUIWindow(MainWindow):
                 try:
                     # Bind the virtual event to call our tcl wrapper with %D
                     self.win.tk.call('bind', self.canvas._w, '<<Drop>>', f'{tcl_cb} %D')
-                except Exception:
+                except Exception as e:
                     # Fallback to widget's dnd_bind if direct bind fails
                     try:
                         self.canvas.dnd_bind('<<Drop>>', self._on_drop)
-                    except Exception:
+                    except Exception as e2:
+                        dnd_error = f"tkinterdnd2 bind failed: {e}, fallback: {e2}"
                         pass
                 dnd_enabled = True
                 self.update_status_line(_('Drag-and-drop enabled (tkinterdnd2)'))
                 self._dnd_backend = 'tkinterdnd2'
-        except Exception:
+            else:
+                dnd_error = "Canvas does not have drop_target_register method"
+        except Exception as e:
+            dnd_error = f"tkinterdnd2 import/setup failed: {e}"
             # Try Tcl tkdnd package as a fallback
             try:
                 # package require tkdnd
@@ -698,10 +703,11 @@ class ASEGUIWindow(MainWindow):
                 # register the canvas as drop target for any type
                 try:
                     self.win.tk.call('tkdnd::drop_target_register', self.canvas._w, '*')
-                except Exception:
+                except Exception as e1:
                     try:
                         self.win.tk.call('tkdnd::drop_target_register', self.canvas._w, 'DND_Files')
-                    except Exception:
+                    except Exception as e2:
+                        dnd_error = f"tkdnd registration failed: {e1}, {e2}"
                         pass
 
                 # Bind using a Tcl wrapper to receive raw %D
@@ -711,11 +717,14 @@ class ASEGUIWindow(MainWindow):
                     dnd_enabled = True
                     self.update_status_line(_('Drag-and-drop enabled (tkdnd)'))
                     self._dnd_backend = 'tkdnd'
-                except Exception:
+                    dnd_error = None  # Clear error if this succeeded
+                except Exception as e3:
                     # Could not bind; fall through
+                    dnd_error = f"tkdnd bind failed: {e3}"
                     pass
-            except Exception:
+            except Exception as e4:
                 # No tkdnd available either
+                dnd_error = f"No DnD backend available: tkinterdnd2: {e}, tkdnd: {e4}"
                 pass
 
         if not dnd_enabled:
@@ -723,7 +732,19 @@ class ASEGUIWindow(MainWindow):
             try:
                 # Only update status line if empty
                 if self.status.cget('text') == '':
-                    self.update_status_line(_('Drag-and-drop disabled — install tkinterdnd2 to enable'))
+                    error_msg = _('Drag-and-drop disabled — install: pip install tkinterdnd2')
+                    if dnd_error:
+                        print(f"DEBUG: DnD initialization failed: {dnd_error}")
+                        print("\nTo enable drag-and-drop functionality:")
+                        print("  1. Install tkinterdnd2: pip install tkinterdnd2")
+                        print("  2. Restart ASE GUI")
+                        print("\nAlternatively, you can:")
+                        print("  - Use File → Open to load files")
+                        print("  - Use Ctrl+O keyboard shortcut")
+                        if workspace_mode:
+                            print("  - Double-click files in the sidebar")
+                        print()
+                    self.update_status_line(error_msg)
             except Exception:
                 pass
 
@@ -883,8 +904,9 @@ def bind_enter(widget, callback):
 
 class TabControl(Widget):
     """A simple tab control widget."""
-    def __init__(self, parent, switch_callback):
+    def __init__(self, parent, switch_callback, gui=None):
         self.switch_callback = switch_callback
+        self.gui = gui  # Reference to GUI for context menu actions
         self.tabs = {}
         self.notebook = ttk.Notebook(parent)
         # Prevent the Notebook from taking focus so arrow keys are handled
@@ -906,6 +928,12 @@ class TabControl(Widget):
         try:
             self.notebook.bind("<Motion>", self._on_motion)
             self.notebook.bind("<Leave>", self._hide_tooltip)
+        except Exception:
+            pass
+        
+        # Bind right-click for context menu
+        try:
+            self.notebook.bind("<Button-3>", self._on_right_click)
         except Exception:
             pass
 
@@ -997,6 +1025,122 @@ class TabControl(Widget):
                 pass
             self._tooltip = None
         self._current_hover_index = None
+    
+    def _on_right_click(self, event):
+        """Show context menu when right-clicking on a tab."""
+        try:
+            # Determine which tab was clicked
+            tab_index = self.notebook.index(f"@{event.x},{event.y}")
+            if tab_index is None:
+                return
+            
+            # Create context menu
+            menu = tk.Menu(self.notebook, tearoff=0)
+            
+            # Only show move left if not the first tab
+            if tab_index > 0:
+                menu.add_command(label="Move Left", 
+                               command=lambda: self._move_tab(tab_index, -1))
+            
+            # Only show move right if not the last tab
+            if tab_index < self.notebook.index("end") - 1:
+                menu.add_command(label="Move Right", 
+                               command=lambda: self._move_tab(tab_index, 1))
+            
+            # Add separator if we have move options
+            if tab_index > 0 or tab_index < self.notebook.index("end") - 1:
+                menu.add_separator()
+            
+            # Move to new window option
+            menu.add_command(label="Move to New Window", 
+                           command=lambda: self._move_to_new_window(tab_index))
+            
+            menu.add_separator()
+            
+            # Close tab option
+            menu.add_command(label="Close", 
+                           command=lambda: self._close_tab_by_index(tab_index))
+            
+            # Helper function to close menu
+            def close_menu(e=None):
+                try:
+                    menu.unpost()
+                except:
+                    pass
+            
+            # Show menu at cursor position
+            menu.post(event.x_root, event.y_root)
+            
+            # Bind multiple events to close the menu
+            menu.bind("<FocusOut>", close_menu)
+            menu.bind("<Leave>", close_menu)
+            
+            # Bind click events on the root window to close menu
+            try:
+                root = self.notebook.winfo_toplevel()
+                # Store the binding IDs so we can unbind later
+                bind_ids = []
+                bind_ids.append(root.bind("<Button-1>", close_menu, add="+"))
+                bind_ids.append(root.bind("<Button-2>", close_menu, add="+"))
+                bind_ids.append(root.bind("<Button-3>", close_menu, add="+"))
+                
+                # Unbind when menu is closed
+                def cleanup_and_close(e=None):
+                    for bid in bind_ids:
+                        try:
+                            root.unbind("<Button-1>", bid)
+                            root.unbind("<Button-2>", bid)
+                            root.unbind("<Button-3>", bid)
+                        except:
+                            pass
+                    close_menu()
+                
+                menu.bind("<Unmap>", cleanup_and_close)
+            except:
+                pass
+            
+            menu.focus_set()
+            
+        except Exception as e:
+            print(f"Error showing tab context menu: {e}")
+    
+    def _move_tab(self, tab_index, direction):
+        """Move a tab left (-1) or right (+1)."""
+        try:
+            new_index = tab_index + direction
+            if new_index < 0 or new_index >= self.notebook.index("end"):
+                return
+            
+            # Get the tab's current state
+            tab_id = self.notebook.tabs()[tab_index]
+            text = self.notebook.tab(tab_id, "text")
+            
+            # Remove and reinsert at new position
+            frame = self.notebook.nametowidget(tab_id)
+            self.notebook.forget(tab_index)
+            self.notebook.insert(new_index, frame, text=text)
+            
+            # Select the moved tab
+            self.notebook.select(new_index)
+            
+        except Exception as e:
+            print(f"Error moving tab: {e}")
+    
+    def _move_to_new_window(self, tab_index):
+        """Move tab to a new window."""
+        if self.gui is not None and hasattr(self.gui, 'move_tab_to_new_window'):
+            try:
+                self.gui.move_tab_to_new_window(tab_index)
+            except Exception as e:
+                print(f"Error moving tab to new window: {e}")
+    
+    def _close_tab_by_index(self, tab_index):
+        """Close a tab by its index."""
+        if self.gui is not None and hasattr(self.gui, 'close_tab_by_index'):
+            try:
+                self.gui.close_tab_by_index(tab_index)
+            except Exception as e:
+                print(f"Error closing tab: {e}")
 
     def remove_tab(self, tab_id):
         """Remove a tab by its tab_id."""

@@ -93,7 +93,7 @@ class GUI(View):
         self.current_tab = None  # Track the currently active tab
 
         # Add a tab control to the GUI
-        self.tab_control = ui.TabControl(self.window.win, self.switch_tab)
+        self.tab_control = ui.TabControl(self.window.win, self.switch_tab, gui=self)
         self.tab_control.pack(side='top', fill='x')
 
         self.tab_view_settings = {}  # Store view settings for each tab
@@ -620,6 +620,66 @@ class GUI(View):
         except Exception as e:
             print(f"Error closing tab: {e}")
             return False
+    
+    def close_tab_by_index(self, tab_index):
+        """Close a tab by its visual index in the notebook."""
+        try:
+            # Map tab index to tab_id
+            for tab_id, frame in self.tab_control.tabs.items():
+                notebook_tabs = self.tab_control.notebook.tabs()
+                if tab_index < len(notebook_tabs):
+                    frame_path = notebook_tabs[tab_index]
+                    if str(frame) == frame_path or self.tab_control.notebook.nametowidget(frame_path) == frame:
+                        # Switch to this tab and close it
+                        self.switch_tab(tab_id)
+                        return self.close_tab()
+            return False
+        except Exception as e:
+            print(f"Error closing tab by index: {e}")
+            return False
+    
+    def move_tab_to_new_window(self, tab_index):
+        """Move a tab to a new window (opens a new GUI instance with that structure)."""
+        try:
+            # Find the tab_id from the index
+            for tab_id, frame in self.tab_control.tabs.items():
+                notebook_tabs = self.tab_control.notebook.tabs()
+                if tab_index < len(notebook_tabs):
+                    frame_path = notebook_tabs[tab_index]
+                    if str(frame) == frame_path or self.tab_control.notebook.nametowidget(frame_path) == frame:
+                        # Get the images for this tab
+                        images = self.tabs.get(tab_id)
+                        if images is None:
+                            return
+                        
+                        # Get the filepath if available
+                        filepath = self.tab_control.filepaths.get(tab_id, None)
+                        
+                        # Create a new GUI window with these images
+                        import subprocess
+                        import sys
+                        
+                        # If we have a filepath, open it in a new window
+                        if filepath:
+                            # Launch new ASE GUI instance with the file
+                            subprocess.Popen([sys.executable, '-m', 'ase', 'gui', filepath])
+                        else:
+                            # For unsaved/modified tabs, we could save to temp and open
+                            # For now, just show a message
+                            from ase.gui.ui import showerror
+                            from ase.gui.i18n import _
+                            showerror(_('Error'), 
+                                    _('Cannot move unsaved tab to new window.\nPlease save the file first.'))
+                            return
+                        
+                        # Close this tab after successfully opening in new window
+                        self.switch_tab(tab_id)
+                        self.close_tab()
+                        return
+        except Exception as e:
+            print(f"Error moving tab to new window: {e}")
+            import traceback
+            traceback.print_exc()
 
     def open(self, button=None, filename=None):
         # Prefer the native OS file dialog when available for a familiar
