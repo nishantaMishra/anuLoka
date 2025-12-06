@@ -474,7 +474,61 @@ def read_tdos_from_hdf5(location):
         print(f"Warning: Could not read TDOS from vaspout.h5: {e}")
         return None, None, None
 
-def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, location=None, fill_colors=None, cutoff=None, show_grid=False, show_ylabel=False, xlabel='Energy (eV)', ylabel='Density of States', title_fontsize=14, xlabel_fontsize=12, ylabel_fontsize=12, xlim=None, ylim=None):
+
+def calculate_dband_center(pdos_files, plotting_info):
+    """Calculate the d-band center from PDOS data.
+    
+    The d-band center is calculated as the first moment of the d-band DOS:
+    d-band center = ∫ E * DOS_d(E) dE / ∫ DOS_d(E) dE
+    """
+    try:
+        total_weighted_energy = 0.0
+        total_dos = 0.0
+        
+        for element, orbitals in plotting_info.items():
+            if element == 'tot' or element not in pdos_files:
+                continue
+            
+            # Check if d-orbital is selected
+            if 'd' not in orbitals and not any(orb in ['dxy', 'dyz', 'dz2', 'dxz', 'dx2'] for orb in orbitals):
+                continue
+            
+            spins = pdos_files[element]
+            for spin, data in spins.items():
+                x = np.array([float(row[0]) for row in data])
+                
+                # Sum d-orbitals
+                if 'd' in orbitals:
+                    y = np.array([sum(map(float, row[5:10])) for row in data])
+                else:
+                    # Individual d-orbitals
+                    y = np.zeros(len(data))
+                    index_map = ['s', 'py', 'pz', 'px', 'dxy', 'dyz', 'dz2', 'dxz', 'dx2', 'tot']
+                    for orb in orbitals:
+                        if orb in ['dxy', 'dyz', 'dz2', 'dxz', 'dx2']:
+                            idx = index_map.index(orb)
+                            y += np.array([float(row[idx]) for row in data])
+                
+                # Integrate only occupied states (E < 0, below Fermi)
+                mask = x < 0
+                if np.any(mask):
+                    x_masked = x[mask]
+                    y_masked = y[mask]
+                    
+                    # Trapezoidal integration
+                    total_weighted_energy += np.trapz(x_masked * y_masked, x_masked)
+                    total_dos += np.trapz(y_masked, x_masked)
+        
+        if total_dos > 1e-10:  # Avoid division by zero
+            return total_weighted_energy / total_dos
+        else:
+            return None
+    except Exception as e:
+        print(f"Warning: Could not calculate d-band center: {e}")
+        return None
+
+
+def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, location=None, fill_colors=None, cutoff=None, show_grid=False, show_ylabel=False, xlabel='Energy (eV)', ylabel='Density of States', title_fontsize=14, xlabel_fontsize=12, ylabel_fontsize=12, xlim=None, ylim=None, show_fermi=True, show_dband=False, custom_marker=None, custom_marker_label=None):
     colors = plt.cm.tab10.colors
     linestyles = ['-', '--', '-.', ':']
     element_color_map = {}
@@ -570,7 +624,22 @@ def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, lo
                             plt.plot(x, y, label=label, color=color, linestyle=linestyle)
 
     plt.axhline(0, color='black', linestyle='-')
-    plt.axvline(0, color='black', linestyle='--')
+    
+    # Plot vertical markers based on user selection
+    if show_fermi:
+        plt.axvline(0, color='black', linestyle='--', label='Fermi level')
+    
+    if show_dband:
+        # Calculate d-band center if requested
+        # For simplicity, we'll mark it at a typical position or calculate from data
+        # This is a placeholder - proper d-band center calculation would require integration
+        dband_center = calculate_dband_center(pdos_files, plotting_info)
+        if dband_center is not None:
+            plt.axvline(dband_center, color='red', linestyle=':', label='d-band center')
+    
+    if custom_marker is not None:
+        label = custom_marker_label if custom_marker_label else f'Custom ({custom_marker:.2f} eV)'
+        plt.axvline(custom_marker, color='green', linestyle='-.', label=label)
     
     # Only add labels/title if they are not None
     if xlabel is not None:

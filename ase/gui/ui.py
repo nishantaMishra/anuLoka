@@ -734,7 +734,7 @@ class ASEGUIWindow(MainWindow):
                 if self.status.cget('text') == '':
                     error_msg = _('Drag-and-drop disabled — install: pip install tkinterdnd2')
                     if dnd_error:
-                        print(f"DEBUG: DnD initialization failed: {dnd_error}")
+                        #print(f"DEBUG: DnD initialization failed: {dnd_error}")
                         print("\nTo enable drag-and-drop functionality:")
                         print("  1. Install tkinterdnd2: pip install tkinterdnd2")
                         print("  2. Restart ASE GUI")

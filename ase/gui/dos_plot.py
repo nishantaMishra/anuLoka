@@ -4,7 +4,13 @@
 
 import os
 import sys
+import shutil
+import subprocess
+import textwrap
+from functools import partial
 from pathlib import Path
+
+import tkinter as tk
 
 import ase.gui.ui as ui
 from ase.gui.i18n import _
@@ -167,46 +173,46 @@ class DOSPlotter:
             return
         
         location = self.default_location
-        print(f"DEBUG: Reading DOS files from: {location}")
-        print(f"DEBUG: Directory exists: {os.path.isdir(location)}")
+        #print(f"DEBUG: Reading DOS files from: {location}")
+        #print(f"DEBUG: Directory exists: {os.path.isdir(location)}")
         if os.path.isdir(location):
-            print(f"DEBUG: Directory contents: {os.listdir(location)[:10]}")  # First 10 files
+            #print(f"DEBUG: Directory contents: {os.listdir(location)[:10]}")  # First 10 files
         
         # First, try to read from vaspout.h5
         if self.HAS_H5PY:
             try:
                 self.pdos_files, self.tdos_data = self.read_pdos_from_hdf5(location)
                 if self.pdos_files:
-                    print(f"DEBUG: Successfully read from vaspout.h5")
+                    #print(f"DEBUG: Successfully read from vaspout.h5")
             except Exception as e:
-                print(f"DEBUG: Failed to read vaspout.h5: {e}")
+                #print(f"DEBUG: Failed to read vaspout.h5: {e}")
         
         # Fall back to .dat files if HDF5 reading failed
         if not self.pdos_files:
-            print(f"DEBUG: Trying to read PDOS .dat files")
+            #print(f"DEBUG: Trying to read PDOS .dat files")
             self.pdos_files = self.read_pdos_files(location)
             if not self.pdos_files:
                 # Try to generate PDOS files
-                print(f"DEBUG: No .dat files found, trying to generate")
+                #print(f"DEBUG: No .dat files found, trying to generate")
                 try:
                     generated = self.try_generate_pdos_dat_files(location)
-                    print(f"DEBUG: Generation result: {generated}")
+                    #print(f"DEBUG: Generation result: {generated}")
                     if generated:
                         self.pdos_files = self.read_pdos_files(location)
-                        print(f"DEBUG: Read files after generation: {self.pdos_files is not None}")
+                        #print(f"DEBUG: Read files after generation: {self.pdos_files is not None}")
                 except Exception as e:
-                    print(f"DEBUG: Failed to generate PDOS files: {e}")
+                    #print(f"DEBUG: Failed to generate PDOS files: {e}")
                     import traceback
                     traceback.print_exc()
         
         if self.pdos_files:
             self.available_elements = sorted(self.pdos_files.keys())
-            print(f"DEBUG: Successfully loaded PDOS for elements: {self.available_elements}")
+            #print(f"DEBUG: Successfully loaded PDOS for elements: {self.available_elements}")
     
     def _build_selection_interface(self):
         """Build the checkbox interface for element and orbital selection."""
-        print(f"DEBUG: Building selection interface with {len(self.available_elements)} elements")
-        print(f"DEBUG: Available elements: {self.available_elements}")
+        #print(f"DEBUG: Building selection interface with {len(self.available_elements)} elements")
+        #print(f"DEBUG: Available elements: {self.available_elements}")
         
         self.win.add(_('\nSelect Elements and Orbitals to Plot:'))
         self.win.add(_('(Right-click p or d for individual orbital options)'))
@@ -226,13 +232,60 @@ class DOSPlotter:
         # Store context menu bindings to apply later
         self.context_menu_bindings = []
         
-        # Create element selection with orbitals
-        for element in self.available_elements:
-            print(f"DEBUG: Adding element {element}")
-            # Element checkbox
-            elem_check = ui.CheckButton(element)
+        # Prepare marker widgets FIRST (for right column)
+        # Create checkbox widgets without text for consistent sizing
+        self.fermi_marker_check = ui.CheckButton(_(''), True, None)
+        self.dband_marker_check = ui.CheckButton(_(''), False, None)
+        self.custom_marker_check = ui.CheckButton(_(''), False, None)
+        self.custom_marker_label_entry = ui.Entry('Custom', width=10)
+        self.custom_marker_value_entry = ui.SpinBox(0.0, -100, 100, 0.5, width=3)
+        
+        # Build right column for markers with left-aligned checkboxes
+        markers_label = ui.Label(_('Vertical Markers:'))
+        
+        # Create checkbox wrapper rows with labels
+        fermi_row = [self.fermi_marker_check, ui.Label(_('Fermi level (E=0)'))]
+
+        # Create checkbox wrapper for d-band center
+        dband_row = [self.dband_marker_check, ui.Label(_('d-band center'))]
+
+        # Create checkbox wrapper for custom (checkbox + label entry + value spinbox + unit)
+        custom_row = [self.custom_marker_check, self.custom_marker_label_entry, self.custom_marker_value_entry, ui.Label(_('eV'))]
+
+        markers_widgets = [
+            fermi_row,
+            dband_row,
+            custom_row
+        ]
+
+        def create_blank_label(width):
+            lbl = ui.Label('')
+            lbl.creator = partial(tk.Label, text='', width=width, anchor='w')
+            return lbl
+
+        def create_spacing_label():
+            lbl = ui.Label('')
+            lbl.creator = partial(tk.Label, text='', width=6)
+            return lbl
+
+        def create_left_placeholder():
+            placeholders = [create_blank_label(2), create_blank_label(3)]
+            for _ in all_orbitals:
+                placeholders.append(create_blank_label(2))
+            return placeholders
+        
+        # Create element selection with orbitals - LEFT COLUMN
+        element_row_count = len(self.available_elements)
+        for idx, element in enumerate(self.available_elements):
+            #print(f"DEBUG: Adding element {element}")
+            # Element checkbox without text + separate label for alignment
+            elem_check = ui.CheckButton('')
+            element_label = ui.Label(element)
+            # Reserve consistent width for element symbols (supports two-letter symbols)
+            element_label.creator = partial(tk.Label, text=element, width=3, anchor='w')
             self.element_checks[element] = {
                 'check': elem_check,
+                'label': element_label,
                 'orbitals': {},
                 'individual_orbitals': {}
             }
@@ -257,8 +310,34 @@ class DOSPlotter:
                 if orbital in ['p', 'd']:
                     self.context_menu_bindings.append((element, orbital, orb_check))
             
-            # Add element with its orbitals in a row
-            self.win.add([elem_check] + orbital_checks)
+            # Build left column row
+            left_widgets = [elem_check, element_label] + orbital_checks
+
+            # Pair with right column (markers) - add wider spacing
+            if idx == 0:
+                # First row: add Vertical Markers header on the right
+                combined_row = left_widgets + [create_spacing_label()] + [markers_label]
+                self.win.add(combined_row)
+            elif idx <= len(markers_widgets):
+                # Subsequent rows: add marker checkboxes
+                marker_idx = idx - 1
+                combined_row = left_widgets + [create_spacing_label()] + markers_widgets[marker_idx]
+                self.win.add(combined_row)
+            else:
+                self.win.add(left_widgets)
+
+        if element_row_count == 0:
+            # No elements selected; still show marker header aligned to the right column
+            placeholder_left = create_left_placeholder()
+            header_row = placeholder_left + [create_spacing_label()] + [markers_label]
+            self.win.add(header_row)
+
+        # Add remaining marker rows if there are more markers than elements
+        marker_start_idx = max(0, element_row_count - 1)
+        for marker_idx in range(marker_start_idx, len(markers_widgets)):
+            placeholder_left = create_left_placeholder()
+            row_widgets = placeholder_left + [create_spacing_label()] + markers_widgets[marker_idx]
+            self.win.add(row_widgets)
         
         # Attach context menus after window is shown (use after_idle)
         # This ensures widgets are created
@@ -287,7 +366,7 @@ class DOSPlotter:
         
         # Color scheme selection (moved below options)
         self.win.add(_('\nColor Scheme:'))
-        print(f"DEBUG: Color schemes available: {self.color_schemes}")
+        #print(f"DEBUG: Color schemes available: {self.color_schemes}")
         color_options = self.color_schemes
         self.color_scheme_var = ui.RadioButtons(
             [c.upper() for c in color_options],
@@ -300,7 +379,7 @@ class DOSPlotter:
     
     def _attach_all_context_menus(self):
         """Attach all context menus after widgets are created."""
-        print(f"DEBUG: Attempting to attach {len(self.context_menu_bindings)} context menus")
+        #print(f"DEBUG: Attempting to attach {len(self.context_menu_bindings)} context menus")
         for element, orbital_type, checkbox_widget in self.context_menu_bindings:
             self._attach_context_menu(element, orbital_type, checkbox_widget)
     
@@ -312,7 +391,7 @@ class DOSPlotter:
             if hasattr(checkbox_widget, 'check'):
                 tk_widget = checkbox_widget.check
             else:
-                print(f"DEBUG: CheckButton for {element} {orbital_type} doesn't have .check yet")
+                #print(f"DEBUG: CheckButton for {element} {orbital_type} doesn't have .check yet")
                 return
             
             def show_context_menu(event):
@@ -321,10 +400,10 @@ class DOSPlotter:
             # Bind right-click event (Button-3 on Linux/Windows, Button-2 on macOS)
             tk_widget.bind('<Button-3>', show_context_menu)
             
-            print(f"DEBUG: Successfully attached context menu to {element} {orbital_type}")
+            #print(f"DEBUG: Successfully attached context menu to {element} {orbital_type}")
             
         except Exception as e:
-            print(f"DEBUG: Could not attach context menu to {element} {orbital_type}: {e}")
+            #print(f"DEBUG: Could not attach context menu to {element} {orbital_type}: {e}")
             import traceback
             traceback.print_exc()
     
@@ -371,7 +450,7 @@ class DOSPlotter:
             menu.post(event.x_root, event.y_root)
             
         except Exception as e:
-            print(f"DEBUG: Error showing orbital menu: {e}")
+            #print(f"DEBUG: Error showing orbital menu: {e}")
             import traceback
             traceback.print_exc()
     
@@ -532,7 +611,7 @@ class DOSPlotter:
                 self.ylim_max.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Y-axis maximum'))
                 self.ylim_max.widget.bind('<Leave>', lambda e: self._hide_tooltip())
         except Exception as e:
-            print(f"DEBUG: Could not attach fontsize tooltips: {e}")
+            #print(f"DEBUG: Could not attach fontsize tooltips: {e}")
     
     def _show_tooltip(self, event, text):
         """Show tooltip on hover."""
@@ -557,12 +636,147 @@ class DOSPlotter:
             pass
     
     def browse_directory(self):
-        """Open directory browser."""
-        from tkinter.filedialog import askdirectory
-        directory = askdirectory(initialdir=self.location.value,
-                                title=_('Select DOS Data Directory'))
+        """Open a native directory browser where possible."""
+        initial_dir = self.location.value.strip() or self.default_location or os.getcwd()
+        if not os.path.isdir(initial_dir):
+            initial_dir = os.path.expanduser('~')
+
+        directory = self._open_native_directory_dialog(initial_dir)
+
+        if not directory:
+            try:
+                from tkinter.filedialog import askdirectory
+                directory = askdirectory(
+                    parent=getattr(self.win, 'win', None),
+                    initialdir=initial_dir,
+                    title=_('Select DOS Data Directory')
+                )
+            except Exception as exc:
+                #print(f"DEBUG: tkinter directory dialog failed: {exc}")
+                directory = None
+
         if directory:
             self.location.value = directory
+
+    def _open_native_directory_dialog(self, initial_dir):
+        """Try platform-specific native dialogs before falling back to Tk."""
+        try:
+            if sys.platform.startswith('win'):
+                return self._browse_directory_windows(initial_dir)
+            if sys.platform == 'darwin':
+                return self._browse_directory_macos(initial_dir)
+            return self._browse_directory_linux(initial_dir)
+        except Exception as exc:
+            #print(f"DEBUG: Native directory dialog failed: {exc}")
+            return None
+
+    def _browse_directory_windows(self, initial_dir):
+        """Use Windows FolderBrowserDialog via PowerShell."""
+        if not shutil.which('powershell'):
+            return None
+
+        env = os.environ.copy()
+        env['ASE_DOS_INITIAL_DIR'] = initial_dir
+        description = _('Select DOS Data Directory').replace("'", "''")
+        script = textwrap.dedent(f"""
+            $ErrorActionPreference='SilentlyContinue'
+            Add-Type -AssemblyName System.Windows.Forms | Out-Null
+            $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dialog.Description = '{description}'
+            $initial = $env:ASE_DOS_INITIAL_DIR
+            if ($initial -and (Test-Path $initial)) {{
+                $dialog.SelectedPath = $initial
+            }}
+            $dialog.ShowNewFolderButton = $true
+            $result = $dialog.ShowDialog()
+            if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
+                Write-Output $dialog.SelectedPath
+            }}
+        """)
+
+        completed = subprocess.run(
+            ['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
+            capture_output=True,
+            text=True,
+            env=env
+        )
+
+        if completed.returncode == 0:
+            path = completed.stdout.strip()
+            if path:
+                return path
+        return None
+
+    def _browse_directory_macos(self, initial_dir):
+        """Use macOS choose folder dialog via AppleScript."""
+        if not shutil.which('osascript'):
+            return None
+
+        env = os.environ.copy()
+        env['ASE_DOS_INITIAL_DIR'] = initial_dir
+        env['ASE_DOS_PROMPT'] = _('Select DOS Data Directory')
+        script = textwrap.dedent("""
+            set initialPath to POSIX file (system attribute "ASE_DOS_INITIAL_DIR")
+            set promptText to system attribute "ASE_DOS_PROMPT"
+            try
+                set chosenFolder to choose folder with prompt promptText default location initialPath
+                POSIX path of chosenFolder
+            on error
+                return ""
+            end try
+        """)
+
+        completed = subprocess.run(
+            ['osascript', '-'],
+            input=script,
+            capture_output=True,
+            text=True,
+            env=env
+        )
+
+        if completed.returncode == 0:
+            path = completed.stdout.strip()
+            if path:
+                return path
+        return None
+
+    def _browse_directory_linux(self, initial_dir):
+        """Try common Linux desktop file chooser commands."""
+        commands = []
+        filename = initial_dir if initial_dir.endswith(os.sep) else initial_dir + os.sep
+        if shutil.which('zenity'):
+            commands.append([
+                'zenity', '--file-selection', '--directory',
+                f"--title={_('Select DOS Data Directory')}",
+                f"--filename={filename}"
+            ])
+        if shutil.which('kdialog'):
+            commands.append([
+                'kdialog', '--getexistingdirectory', initial_dir,
+                '--title', _('Select DOS Data Directory')
+            ])
+        if shutil.which('qarma'):
+            commands.append([
+                'qarma', '--file-selection', '--directory',
+                f"--title={_('Select DOS Data Directory')}",
+                f"--filename={filename}"
+            ])
+
+        for cmd in commands:
+            try:
+                completed = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True
+                )
+                if completed.returncode == 0:
+                    path = completed.stdout.strip()
+                    if path:
+                        return path
+            except Exception as exc:
+                #print(f"DEBUG: Command {cmd} failed: {exc}")
+
+        return None
     
     def refresh(self):
         """Refresh DOS files from the selected directory."""
@@ -631,6 +845,25 @@ class DOSPlotter:
         # Get fill and grid options
         fill = self.fill_check.var.get()
         show_grid = self.grid_check.var.get()
+        
+        # Get vertical marker options
+        show_fermi = self.fermi_marker_check.var.get()
+        show_dband = self.dband_marker_check.var.get()
+        
+        # Get custom marker value and label
+        custom_marker = None
+        custom_marker_label = None
+        if self.custom_marker_check.var.get():
+            custom_marker_str = self.custom_marker_value_entry.value
+            custom_marker_label = self.custom_marker_label_entry.value.strip()
+            if custom_marker_str is not None:
+                try:
+                    custom_marker = float(custom_marker_str)
+                except (ValueError, TypeError):
+                    ui.showerror(_('Error'), _('Invalid custom marker value.'))
+                    return
+            if not custom_marker_label:
+                custom_marker_label = f'Custom ({custom_marker:.2f} eV)'
         
         # Get cutoff
         cutoff = None
@@ -705,7 +938,9 @@ class DOSPlotter:
                           title_fontsize=title_fontsize, 
                           xlabel_fontsize=xlabel_fontsize, 
                           ylabel_fontsize=ylabel_fontsize,
-                          xlim=xlim, ylim=ylim)
+                          xlim=xlim, ylim=ylim,
+                          show_fermi=show_fermi, show_dband=show_dband, 
+                          custom_marker=custom_marker, custom_marker_label=custom_marker_label)
         except Exception as e:
             ui.showerror(_('Error'), 
                         _('Error plotting DOS:\n\n') + str(e))
