@@ -173,47 +173,33 @@ class DOSPlotter:
             return
         
         location = self.default_location
-        #print(f"DEBUG: Reading DOS files from: {location}")
-        #print(f"DEBUG: Directory exists: {os.path.isdir(location)}")
-        if os.path.isdir(location):
-            #print(f"DEBUG: Directory contents: {os.listdir(location)[:10]}")  # First 10 files
         
         # First, try to read from vaspout.h5
         if self.HAS_H5PY:
             try:
                 self.pdos_files, self.tdos_data = self.read_pdos_from_hdf5(location)
                 if self.pdos_files:
-                    #print(f"DEBUG: Successfully read from vaspout.h5")
+                    pass
             except Exception as e:
-                #print(f"DEBUG: Failed to read vaspout.h5: {e}")
+                pass
         
         # Fall back to .dat files if HDF5 reading failed
         if not self.pdos_files:
-            #print(f"DEBUG: Trying to read PDOS .dat files")
             self.pdos_files = self.read_pdos_files(location)
             if not self.pdos_files:
                 # Try to generate PDOS files
-                #print(f"DEBUG: No .dat files found, trying to generate")
                 try:
                     generated = self.try_generate_pdos_dat_files(location)
-                    #print(f"DEBUG: Generation result: {generated}")
                     if generated:
                         self.pdos_files = self.read_pdos_files(location)
-                        #print(f"DEBUG: Read files after generation: {self.pdos_files is not None}")
                 except Exception as e:
-                    #print(f"DEBUG: Failed to generate PDOS files: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    pass
         
         if self.pdos_files:
             self.available_elements = sorted(self.pdos_files.keys())
-            #print(f"DEBUG: Successfully loaded PDOS for elements: {self.available_elements}")
     
     def _build_selection_interface(self):
         """Build the checkbox interface for element and orbital selection."""
-        #print(f"DEBUG: Building selection interface with {len(self.available_elements)} elements")
-        #print(f"DEBUG: Available elements: {self.available_elements}")
-        
         self.win.add(_('\nSelect Elements and Orbitals to Plot:'))
         self.win.add(_('(Right-click p or d for individual orbital options)'))
         
@@ -277,7 +263,6 @@ class DOSPlotter:
         # Create element selection with orbitals - LEFT COLUMN
         element_row_count = len(self.available_elements)
         for idx, element in enumerate(self.available_elements):
-            #print(f"DEBUG: Adding element {element}")
             # Element checkbox without text + separate label for alignment
             elem_check = ui.CheckButton('')
             element_label = ui.Label(element)
@@ -366,7 +351,6 @@ class DOSPlotter:
         
         # Color scheme selection (moved below options)
         self.win.add(_('\nColor Scheme:'))
-        #print(f"DEBUG: Color schemes available: {self.color_schemes}")
         color_options = self.color_schemes
         self.color_scheme_var = ui.RadioButtons(
             [c.upper() for c in color_options],
@@ -379,7 +363,6 @@ class DOSPlotter:
     
     def _attach_all_context_menus(self):
         """Attach all context menus after widgets are created."""
-        #print(f"DEBUG: Attempting to attach {len(self.context_menu_bindings)} context menus")
         for element, orbital_type, checkbox_widget in self.context_menu_bindings:
             self._attach_context_menu(element, orbital_type, checkbox_widget)
     
@@ -391,7 +374,6 @@ class DOSPlotter:
             if hasattr(checkbox_widget, 'check'):
                 tk_widget = checkbox_widget.check
             else:
-                #print(f"DEBUG: CheckButton for {element} {orbital_type} doesn't have .check yet")
                 return
             
             def show_context_menu(event):
@@ -400,10 +382,8 @@ class DOSPlotter:
             # Bind right-click event (Button-3 on Linux/Windows, Button-2 on macOS)
             tk_widget.bind('<Button-3>', show_context_menu)
             
-            #print(f"DEBUG: Successfully attached context menu to {element} {orbital_type}")
-            
         except Exception as e:
-            #print(f"DEBUG: Could not attach context menu to {element} {orbital_type}: {e}")
+            pass
             import traceback
             traceback.print_exc()
     
@@ -450,9 +430,7 @@ class DOSPlotter:
             menu.post(event.x_root, event.y_root)
             
         except Exception as e:
-            #print(f"DEBUG: Error showing orbital menu: {e}")
-            import traceback
-            traceback.print_exc()
+            pass
     
     def _on_individual_orbital_changed(self, element, orbital_type):
         """Handle individual orbital selection change and sync parent checkbox."""
@@ -611,7 +589,7 @@ class DOSPlotter:
                 self.ylim_max.widget.bind('<Enter>', lambda e: self._show_tooltip(e, 'Y-axis maximum'))
                 self.ylim_max.widget.bind('<Leave>', lambda e: self._hide_tooltip())
         except Exception as e:
-            #print(f"DEBUG: Could not attach fontsize tooltips: {e}")
+            pass
     
     def _show_tooltip(self, event, text):
         """Show tooltip on hover."""
@@ -652,7 +630,6 @@ class DOSPlotter:
                     title=_('Select DOS Data Directory')
                 )
             except Exception as exc:
-                #print(f"DEBUG: tkinter directory dialog failed: {exc}")
                 directory = None
 
         if directory:
@@ -667,7 +644,6 @@ class DOSPlotter:
                 return self._browse_directory_macos(initial_dir)
             return self._browse_directory_linux(initial_dir)
         except Exception as exc:
-            #print(f"DEBUG: Native directory dialog failed: {exc}")
             return None
 
     def _browse_directory_windows(self, initial_dir):
@@ -774,7 +750,7 @@ class DOSPlotter:
                     if path:
                         return path
             except Exception as exc:
-                #print(f"DEBUG: Command {cmd} failed: {exc}")
+                pass
 
         return None
     
