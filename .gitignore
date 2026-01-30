@@ -11,8 +11,11 @@ __pycache__/
 *.pyo
 *.pyd
 
+# initial code files
+initial_code/
+
 # Virtual environments
-venv/
+dftf/
 .env/
 
 # IDE/Editor configurations

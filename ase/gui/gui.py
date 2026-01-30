@@ -361,6 +361,11 @@ class GUI(View):
         from ase.gui.dos_plot import dos_plot_window
         dos_plot_window(self)
 
+    def plot_potential_window(self, key=None):
+        """Open Potential plotting window."""
+        from ase.gui.potential_plot import potential_plot_window
+        potential_plot_window(self)
+
     def pipe(self, task, data):
         process = subprocess.Popen([sys.executable, '-m', 'ase.gui.pipe'],
                                    stdout=subprocess.PIPE,
@@ -1098,6 +1103,7 @@ class GUI(View):
              [M(_('Graphs ...'), self.plot_graphs),
               M(_('Movie ...'), self.movie),
               M(_('Plot DOS ...'), self.plot_dos_window),
+              M(_('Plot Potential ...'), self.plot_potential_window),
               M(_('Constraints ...'), self.constraints_window),
               M(_('Render scene ...'), self.render_window),
               M(_('_Move selected atoms'), self.toggle_move_mode, 'Ctrl+M'),

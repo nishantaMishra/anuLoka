@@ -24,6 +24,7 @@ The Installation of dependencies can be done within this virtual environment.
 - tkinterdnd2 #pip install tkinterdnd2
 - numpy # pip install numpy
 - scipy # pip install scipy
+- pip install h5py
 
 # Other dependencies:
 - vaspkit (for DOS plotting) # Follow instructions at https://vaspkit.com/
