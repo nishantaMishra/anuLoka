@@ -59,8 +59,7 @@ class PotentialPlotter:
         self.loc_entry = ui.Entry(os.path.join(self.default_location, 'LOCPOT'), width=50)
         self.win.add([self.loc_entry, ui.Button(_('Browse...'), self.browse_file)])
 
-        # Plot type dropdown
-        self.win.add(_('Plot Type:'))
+        # Plot type dropdown with space for axis (axis shown only for Planar-Average)
         # First entry is a placeholder so users must actively choose a plot type
         self._placeholder_type = _('Select Plot Type...')
         types = [
@@ -73,10 +72,13 @@ class PotentialPlotter:
         ]
         # Use ComboBox for selection
         self.type_combo = ui.ComboBox(types, types, callback=self._on_type_change)
-        self.win.add(self.type_combo)
         
-        # Axis selection dropdown (for Planar-Average, shown conditionally)
+        # Create axis selection (shown conditionally for Planar-Average)
+        self.axis_label = ui.Label(_('  Axis:'))
         self.axis_combo = ui.ComboBox(['x', 'y', 'z'], ['a', 'b', 'c'], callback=None)
+        
+        # Add Plot Type label and combo
+        self.win.add([ui.Label(_('Plot Type:')), self.type_combo, self.axis_label, self.axis_combo])
 
         # Area where type-specific options are placed
         self.options_rows = ui.Rows()
@@ -92,6 +94,15 @@ class PotentialPlotter:
         # Do not show customization until the user actively selects a plot type.
         # Show a prompt in the options area instead.
         self.options_rows.add(_('Please select a plot type to show options.'))
+        
+        # Initially hide axis widgets completely using pack_forget
+        try:
+            if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
+                self.axis_label.widget.pack_forget()
+            if hasattr(self, 'axis_combo') and hasattr(self.axis_combo, 'widget'):
+                self.axis_combo.widget.pack_forget()
+        except Exception:
+            pass
 
     def _get_default_location(self):
         if hasattr(self.gui, 'workspace_dir') and self.gui.workspace_dir:
@@ -128,21 +139,38 @@ class PotentialPlotter:
 
         # Value is one of the labels; check for Planar-Average
         if value == 'Planar-Average Potential':
-            # Show axis selection
-            self.options_rows.add([ui.Label(_('Select axis for planar average:')), self.axis_combo])
+            # Show axis selection using pack()
+            try:
+                if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
+                    self.axis_label.widget.pack(side='left')
+                if hasattr(self, 'axis_combo') and hasattr(self.axis_combo, 'widget'):
+                    self.axis_combo.widget.pack(side='left')
+            except Exception:
+                pass
+            
             # Add planar-specific checkboxes (default: unchecked)
             try:
                 self.show_vac_check = ui.CheckButton(_('Show Vacuum level'), False, None)
                 self.show_fermi_check = ui.CheckButton(_('Show Fermi level'), False, None)
-                self.options_rows.add([self.show_vac_check, self.show_fermi_check])
+                self.show_wf_check = ui.CheckButton(_('Show Work function'), False, None)
+                self.options_rows.add([self.show_vac_check, self.show_fermi_check, self.show_wf_check])
                 
                 # Add entry fields to display computed values
                 self.vac_value_entry = ui.Entry('', width=15)
                 self.fermi_value_entry = ui.Entry('', width=15)
-                self.options_rows.add([self.vac_value_entry, self.fermi_value_entry])
+                self.wf_value_entry = ui.Entry('', width=15)
+                self.options_rows.add([self.vac_value_entry, self.fermi_value_entry, self.wf_value_entry])
             except Exception:
                 pass
         else:
+            # Hide axis selection using pack_forget()
+            try:
+                if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
+                    self.axis_label.widget.pack_forget()
+                if hasattr(self, 'axis_combo') and hasattr(self.axis_combo, 'widget'):
+                    self.axis_combo.widget.pack_forget()
+            except Exception:
+                pass
             # For now, show a short helper text for other types
             self.options_rows.add(_('Selected plot type will show its options here.'))
 
@@ -305,70 +333,71 @@ class PotentialPlotter:
                     except Exception:
                         ylim = None
 
-                # Compute vacuum level using vaspkit if requested
+                # Always compute vacuum level for Planar-Average
                 vacuum_level = None
                 work_function = None
-                if hasattr(self, 'show_vac_check') and self.show_vac_check.var.get():
-                    try:
-                        # Map axis radio value ('a','b','c') to vaspkit input (1,2,3)
-                        axis_map = {'a': '1', 'b': '2', 'c': '3'}
-                        axis_input = axis_map.get(direction, '3')
-                        
-                        loc_dir = os.path.dirname(loc) or os.getcwd()
-                        # Execute vaspkit: 42 -> 426 -> axis
-                        cmd = f'(echo 42; sleep 0.5; echo 426; sleep 0.5; echo {axis_input}) | vaspkit'
-                        result = subprocess.run(cmd, shell=True, cwd=loc_dir, 
-                                              capture_output=True, text=True, timeout=30)
-                        
-                        # Parse stdout for "Vacuum-Level (eV): X.XXX" and "Work Function (eV): Y.YYY"
-                        for line in result.stdout.split('\n'):
-                            if 'Vacuum-Level (eV):' in line:
-                                try:
-                                    parts = line.split(':')
-                                    vacuum_level = float(parts[1].strip())
-                                except Exception:
-                                    pass
-                            if 'Work Function (eV):' in line:
-                                try:
-                                    parts = line.split(':')
-                                    work_function = float(parts[1].strip())
-                                except Exception:
-                                    pass
-                        
-                        # Update the entry field with the value
-                        if vacuum_level is not None and hasattr(self, 'vac_value_entry'):
-                            self.vac_value_entry.value = f'{vacuum_level:.4f} eV'
-                    except Exception as e:
-                        print(f"Warning: Could not get vacuum level from vaspkit: {e}")
-                        vacuum_level = None
-                        if hasattr(self, 'vac_value_entry'):
-                            self.vac_value_entry.value = 'N/A'
-                else:
-                    # Clear the entry if checkbox is unchecked
+                try:
+                    # Map axis value ('a','b','c') to vaspkit input (1,2,3)
+                    axis_map = {'a': '1', 'b': '2', 'c': '3'}
+                    axis_input = axis_map.get(direction, '3')
+                    
+                    loc_dir = os.path.dirname(loc) or os.getcwd()
+                    # Execute vaspkit: 42 -> 426 -> axis
+                    cmd = f'(echo 42; sleep 0.5; echo 426; sleep 0.5; echo {axis_input}) | vaspkit'
+                    result = subprocess.run(cmd, shell=True, cwd=loc_dir, 
+                                          capture_output=True, text=True, timeout=30)
+                    
+                    # Parse stdout for "Vacuum-Level (eV): X.XXX" and "Work Function (eV): Y.YYY"
+                    for line in result.stdout.split('\n'):
+                        if 'Vacuum-Level (eV):' in line:
+                            try:
+                                parts = line.split(':')
+                                vacuum_level = float(parts[1].strip())
+                            except Exception:
+                                pass
+                        if 'Work Function (eV):' in line:
+                            try:
+                                parts = line.split(':')
+                                work_function = float(parts[1].strip())
+                            except Exception:
+                                pass
+                    
+                    # Update the entry field with the value
+                    if vacuum_level is not None and hasattr(self, 'vac_value_entry'):
+                        self.vac_value_entry.value = f'{vacuum_level:.4f} eV'
+                    elif hasattr(self, 'vac_value_entry'):
+                        self.vac_value_entry.value = 'N/A'
+                    
+                    # Update work function entry field
+                    if work_function is not None and hasattr(self, 'wf_value_entry'):
+                        self.wf_value_entry.value = f'{work_function:.4f} eV'
+                    elif hasattr(self, 'wf_value_entry'):
+                        self.wf_value_entry.value = 'N/A'
+                except Exception as e:
+                    print(f"Warning: Could not get vacuum level from vaspkit: {e}")
+                    vacuum_level = None
+                    work_function = None
                     if hasattr(self, 'vac_value_entry'):
-                        self.vac_value_entry.value = ''
+                        self.vac_value_entry.value = 'N/A'
+                    if hasattr(self, 'wf_value_entry'):
+                        self.wf_value_entry.value = 'N/A'
 
-                # Read Fermi from OUTCAR if requested
+                # Always read Fermi from OUTCAR for Planar-Average
                 fermi_level = None
-                if hasattr(self, 'show_fermi_check') and self.show_fermi_check.var.get():
-                    try:
-                        loc_dir = os.path.dirname(loc) or os.getcwd()
-                        outcar_path = os.path.join(loc_dir, 'OUTCAR')
-                        fermi_level = parse_outcar_fermi(outcar_path)
-                        
-                        # Update the entry field with the value
-                        if fermi_level is not None and hasattr(self, 'fermi_value_entry'):
-                            self.fermi_value_entry.value = f'{fermi_level:.4f} eV'
-                        elif hasattr(self, 'fermi_value_entry'):
-                            self.fermi_value_entry.value = 'N/A'
-                    except Exception:
-                        fermi_level = None
-                        if hasattr(self, 'fermi_value_entry'):
-                            self.fermi_value_entry.value = 'N/A'
-                else:
-                    # Clear the entry if checkbox is unchecked
+                try:
+                    loc_dir = os.path.dirname(loc) or os.getcwd()
+                    outcar_path = os.path.join(loc_dir, 'OUTCAR')
+                    fermi_level = parse_outcar_fermi(outcar_path)
+                    
+                    # Update the entry field with the value
+                    if fermi_level is not None and hasattr(self, 'fermi_value_entry'):
+                        self.fermi_value_entry.value = f'{fermi_level:.4f} eV'
+                    elif hasattr(self, 'fermi_value_entry'):
+                        self.fermi_value_entry.value = 'N/A'
+                except Exception:
+                    fermi_level = None
                     if hasattr(self, 'fermi_value_entry'):
-                        self.fermi_value_entry.value = ''
+                        self.fermi_value_entry.value = 'N/A'
 
                 plt.figure()
                 if fill:
@@ -382,17 +411,31 @@ class PotentialPlotter:
                     plt.title(title, fontsize=title_fs)
                 if show_grid:
                     plt.grid(True, alpha=0.3)
-                # Plot vacuum and fermi levels if available
-                if vacuum_level is not None:
+                # Plot vacuum and fermi levels only if checkboxes are checked
+                if vacuum_level is not None and hasattr(self, 'show_vac_check') and self.show_vac_check.var.get():
                     plt.axhline(vacuum_level, color='orange', linestyle='--', label=_('Vacuum level'))
-                if fermi_level is not None:
+                if fermi_level is not None and hasattr(self, 'show_fermi_check') and self.show_fermi_check.var.get():
                     plt.axhline(fermi_level, color='red', linestyle=':', label=_('Fermi level'))
+                # Note: Work function is a scalar difference, not typically plotted as a line
+                # But if user wants to see it as annotation or line, can be added here
                 if xlim is not None:
                     plt.xlim(xlim)
                 if ylim is not None:
                     plt.ylim(ylim)
                 plt.tight_layout()
-                if (vacuum_level is not None) or (fermi_level is not None):
+                # Show legend only if at least one line is plotted
+                show_legend = False
+                if hasattr(self, 'show_vac_check') and self.show_vac_check.var.get() and vacuum_level is not None:
+                    show_legend = True
+                if hasattr(self, 'show_fermi_check') and self.show_fermi_check.var.get() and fermi_level is not None:
+                    show_legend = True
+                # Work function as text annotation if checked
+                if hasattr(self, 'show_wf_check') and self.show_wf_check.var.get() and work_function is not None:
+                    # Add work function as text annotation in the plot
+                    plt.text(0.02, 0.98, f'Work Function: {work_function:.4f} eV', 
+                            transform=plt.gca().transAxes, verticalalignment='top',
+                            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                if show_legend:
                     plt.legend()
                 plt.show()
             except Exception as e:
