@@ -528,7 +528,25 @@ def calculate_dband_center(pdos_files, plotting_info):
         return None
 
 
-def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, location=None, fill_colors=None, cutoff=None, show_grid=False, show_ylabel=False, xlabel='Energy (eV)', ylabel='Density of States', title_fontsize=14, xlabel_fontsize=12, ylabel_fontsize=12, xlim=None, ylim=None, show_fermi=True, show_dband=False, custom_marker=None, custom_marker_label=None):
+def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, location=None, fill_colors=None, cutoff=None, show_grid=False, show_ylabel=False, xlabel='Energy (eV)', ylabel='Density of States', title_fontsize=14, xlabel_fontsize=12, ylabel_fontsize=12, xlim=None, ylim=None, show_fermi=True, show_dband=False, custom_marker=None, custom_marker_label=None, fig=None, auto_refresh=False):
+    """Plot PDOS data.
+    
+    Args:
+        fig: Optional matplotlib figure to reuse for live preview. If provided,
+             the figure will be cleared and reused instead of creating a new one.
+        auto_refresh: If True, only redraw canvas without activating window.
+    
+    Returns:
+        The matplotlib figure object.
+    """
+    # Create or reuse figure
+    if fig is not None:
+        fig.clear()
+        ax = fig.add_subplot(111)
+        plt.sca(ax)
+    else:
+        fig = plt.figure()
+    
     colors = plt.cm.tab10.colors
     linestyles = ['-', '--', '-.', ':']
     element_color_map = {}
@@ -661,7 +679,16 @@ def plot_pdos(pdos_files, plotting_info, title, spin_filter=None, fill=False, lo
     if ylim is not None:
         plt.ylim(ylim)
     
-    plt.show()
+    # Draw the figure
+    if auto_refresh:
+        # For live preview: only redraw canvas without activating window
+        fig.canvas.draw_idle()
+    else:
+        # For explicit Plot: show the figure window
+        fig.canvas.draw()
+        plt.show(block=False)
+    
+    return fig
 
 def parse_color_input(color_str):
     """Parse and validate color input"""

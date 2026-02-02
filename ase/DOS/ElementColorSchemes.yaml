@@ -220,239 +220,239 @@ VESTA:
   Zn: [143, 143, 129]
   Zr: [0, 255, 0]
   TDOS: [128, 128, 128]
-User:  # Customizable color scheme - modify these colors as needed
-  H: [255, 204, 204]    # Pinkish White
-  He: [255, 192, 203]   # Pink
-  Li: [255, 0, 255]     # Magenta
-  Be: [0, 255, 0]       # Green
-  B: [255, 165, 0]      # Orange
-  C: [64, 64, 64]       # Dark Gray
-  N: [0, 0, 255]        # Blue
-  O: [255, 0, 0]        # Red
-  F: [144, 238, 144]    # Light Green
-  Ne: [255, 20, 147]    # Deep Pink
-  Na: [128, 0, 128]     # Purple
-  Mg: [34, 139, 34]     # Forest Green
-  Al: [169, 169, 169]   # Dark Gray
-  Si: [255, 215, 0]     # Gold
-  P: [255, 69, 0]       # Red Orange
-  S: [255, 255, 0]      # Yellow
-  Cl: [0, 255, 127]     # Spring Green
-  Ar: [176, 196, 222]   # Light Steel Blue
-  K: [75, 0, 130]       # Indigo
-  Ca: [255, 127, 80]    # Coral
-  Sc: [230, 230, 250]   # Lavender
-  Ti: [135, 206, 235]   # Sky Blue
-  V: [255, 20, 147]     # Deep Pink
-  Cr: [220, 20, 60]     # Crimson
-  Mn: [186, 85, 211]    # Medium Orchid
-  Fe: [255, 140, 0]     # Dark Orange
-  Co: [70, 130, 180]    # Steel Blue
-  Ni: [46, 125, 50]     # Dark Green
-  Cu: [184, 115, 51]    # Bronze
-  Zn: [105, 105, 105]   # Dim Gray
-  Ga: [255, 182, 193]   # Light Pink
-  Ge: [128, 128, 0]     # Olive
-  As: [148, 0, 211]     # Dark Violet
-  Se: [255, 165, 0]     # Orange
-  Br: [139, 69, 19]     # Saddle Brown
-  Kr: [123, 104, 238]   # Medium Slate Blue
-  Rb: [72, 61, 139]     # Dark Slate Blue
-  Sr: [50, 205, 50]     # Lime Green
-  Y: [240, 230, 140]    # Khaki
-  Zr: [64, 224, 208]    # Turquoise
-  Nb: [72, 209, 204]    # Medium Turquoise
-  Mo: [95, 158, 160]    # Cadet Blue
-  Tc: [0, 139, 139]     # Dark Cyan
-  Ru: [70, 130, 180]    # Steel Blue
-  Rh: [255, 105, 180]   # Hot Pink
-  Pd: [218, 165, 32]    # Golden Rod
-  Ag: [192, 192, 192]   # Silver
-  Cd: [255, 228, 181]   # Moccasin
-  In: [205, 92, 92]     # Indian Red
-  Sn: [119, 136, 153]   # Light Slate Gray
-  Sb: [138, 43, 226]    # Blue Violet
-  Te: [255, 140, 0]     # Dark Orange
-  I: [75, 0, 130]       # Indigo
-  Xe: [72, 61, 139]     # Dark Slate Blue
-  Cs: [14, 254, 185]    # Blue Violet
-  Ba: [154, 205, 50]    # Yellow Green
-  La: [135, 206, 250]   # Light Sky Blue
-  Ce: [255, 248, 220]   # Cornsilk
-  Pr: [152, 251, 152]   # Pale Green
-  Nd: [144, 238, 144]   # Light Green
-  Pm: [173, 255, 47]    # Green Yellow
-  Sm: [127, 255, 212]   # Aquamarine
-  Eu: [102, 205, 170]   # Medium Aquamarine
-  Gd: [72, 209, 204]    # Medium Turquoise
-  Tb: [32, 178, 170]    # Light Sea Green
-  Dy: [0, 206, 209]     # Dark Turquoise
-  Ho: [0, 255, 127]     # Spring Green
-  Er: [34, 139, 34]     # Forest Green
-  Tm: [0, 128, 0]       # Green
-  Yb: [124, 252, 0]     # Lawn Green
-  Lu: [0, 100, 0]       # Dark Green
-  Hf: [30, 144, 255]    # Dodger Blue
-  Ta: [0, 191, 255]     # Deep Sky Blue
-  W: [25, 25, 112]      # Midnight Blue
-  Re: [70, 130, 180]    # Steel Blue
-  Os: [0, 0, 139]       # Dark Blue
-  Ir: [72, 61, 139]     # Dark Slate Blue
-  Pt: [211, 211, 211]  # Light Gray
-  Au: [255, 215, 0]     # Gold
-  Hg: [220, 220, 220]   # Gainsboro
-  Tl: [160, 82, 45]     # Saddle Brown
-  Pb: [105, 105, 105]   # Dim Gray
-  Bi: [219, 112, 147]   # Pale Violet Red
-  Po: [210, 180, 140]   # Tan
-  At: [139, 69, 19]     # Saddle Brown
-  Rn: [65, 105, 225]    # Royal Blue
-  Fr: [128, 0, 128]     # Purple
-  Ra: [0, 128, 0]       # Green
-  Ac: [176, 196, 222]   # Light Steel Blue
-  Th: [0, 191, 255]     # Deep Sky Blue
-  Pa: [30, 144, 255]    # Dodger Blue
-  U: [0, 0, 255]        # Blue
-  Np: [0, 0, 205]       # Medium Blue
-  Pu: [0, 0, 139]       # Dark Blue
-  Am: [138, 43, 226]    # Blue Violet
-  Cm: [148, 0, 211]     # Dark Violet
-  Bk: [139, 0, 139]     # Dark Magenta
-  Cf: [199, 21, 133]    # Medium Violet Red
-  Es: [220, 20, 60]     # Crimson
-  Fm: [255, 20, 147]    # Deep Pink
-  Md: [255, 105, 180]   # Hot Pink
-  'No': [255, 182, 193] # Light Pink
-  Lr: [255, 192, 203]   # Pink
+User:
+  H: [255, 204, 204]
+  He: [255, 192, 203]
+  Li: [255, 0, 255]
+  Be: [0, 255, 0]
+  B: [255, 165, 0]
+  C: [64, 64, 64]
+  N: [0, 0, 255]
+  O: [255, 0, 0]
+  F: [144, 238, 144]
+  Ne: [255, 20, 147]
+  Na: [128, 0, 128]
+  Mg: [34, 139, 34]
+  Al: [169, 169, 169]
+  Si: [255, 215, 0]
+  P: [255, 69, 0]
+  S: [255, 255, 0]
+  Cl: [0, 255, 127]
+  Ar: [176, 196, 222]
+  K: [75, 0, 130]
+  Ca: [255, 127, 80]
+  Sc: [230, 230, 250]
+  Ti: [135, 206, 235]
+  V: [255, 20, 147]
+  Cr: [220, 20, 60]
+  Mn: [186, 85, 211]
+  Fe: [255, 140, 0]
+  Co: [70, 130, 180]
+  Ni: [46, 125, 50]
+  Cu: [184, 115, 51]
+  Zn: [105, 105, 105]
+  Ga: [255, 182, 193]
+  Ge: [128, 128, 0]
+  As: [148, 0, 211]
+  Se: [255, 165, 0]
+  Br: [139, 69, 19]
+  Kr: [123, 104, 238]
+  Rb: [72, 61, 139]
+  Sr: [50, 205, 50]
+  Y: [240, 230, 140]
+  Zr: [64, 224, 208]
+  Nb: [72, 209, 204]
+  Mo: [95, 158, 160]
+  Tc: [0, 139, 139]
+  Ru: [70, 130, 180]
+  Rh: [255, 105, 180]
+  Pd: [218, 165, 32]
+  Ag: [192, 192, 192]
+  Cd: [255, 228, 181]
+  In: [205, 92, 92]
+  Sn: [119, 136, 153]
+  Sb: [138, 43, 226]
+  Te: [255, 140, 0]
+  I: [75, 0, 130]
+  Xe: [72, 61, 139]
+  Cs: [255, 255, 0]
+  Ba: [154, 205, 50]
+  La: [135, 206, 250]
+  Ce: [255, 248, 220]
+  Pr: [152, 251, 152]
+  Nd: [144, 238, 144]
+  Pm: [173, 255, 47]
+  Sm: [127, 255, 212]
+  Eu: [102, 205, 170]
+  Gd: [72, 209, 204]
+  Tb: [32, 178, 170]
+  Dy: [0, 206, 209]
+  Ho: [0, 255, 127]
+  Er: [34, 139, 34]
+  Tm: [0, 128, 0]
+  Yb: [124, 252, 0]
+  Lu: [0, 100, 0]
+  Hf: [30, 144, 255]
+  Ta: [0, 191, 255]
+  W: [25, 25, 112]
+  Re: [70, 130, 180]
+  Os: [0, 0, 139]
+  Ir: [72, 61, 139]
+  Pt: [211, 211, 211]
+  Au: [255, 215, 0]
+  Hg: [220, 220, 220]
+  Tl: [160, 82, 45]
+  Pb: [105, 105, 105]
+  Bi: [219, 112, 147]
+  Po: [210, 180, 140]
+  At: [139, 69, 19]
+  Rn: [65, 105, 225]
+  Fr: [128, 0, 128]
+  Ra: [0, 128, 0]
+  Ac: [176, 196, 222]
+  Th: [0, 191, 255]
+  Pa: [30, 144, 255]
+  U: [0, 0, 255]
+  Np: [0, 0, 205]
+  Pu: [0, 0, 139]
+  Am: [138, 43, 226]
+  Cm: [148, 0, 211]
+  Bk: [139, 0, 139]
+  Cf: [199, 21, 133]
+  Es: [220, 20, 60]
+  Fm: [255, 20, 147]
+  Md: [255, 105, 180]
+  'No': [255, 182, 193]
+  Lr: [255, 192, 203]
   TDOS: [128, 128, 128]
-CPK:  # Classic Corey-Pauling-Koltun chemistry colors from 1960s
-  H: [255, 255, 255]    # White
-  C: [0, 0, 0]          # Black
-  N: [0, 0, 255]        # Blue
-  O: [255, 0, 0]        # Red
-  F: [0, 255, 0]        # Green
-  Cl: [0, 255, 0]       # Green
-  Br: [165, 42, 42]     # Brown
-  I: [148, 0, 211]      # Violet
-  P: [255, 165, 0]      # Orange
-  S: [255, 255, 0]      # Yellow
-  B: [255, 192, 203]    # Pink
-  Li: [128, 0, 128]     # Purple
-  Na: [128, 0, 128]     # Purple
-  Mg: [34, 139, 34]     # Forest Green
-  Al: [128, 128, 128]   # Gray
-  Si: [218, 165, 32]    # Goldenrod
-  K: [128, 0, 128]      # Purple
-  Ca: [128, 128, 128]   # Gray
-  Ti: [128, 128, 128]   # Gray
-  Cr: [128, 128, 128]   # Gray
-  Mn: [128, 128, 128]   # Gray
-  Fe: [255, 165, 0]     # Orange
-  Co: [255, 165, 0]     # Orange
-  Ni: [165, 42, 42]     # Brown
-  Cu: [165, 42, 42]     # Brown
-  Zn: [165, 42, 42]     # Brown
-  As: [255, 165, 0]     # Orange
-  Se: [255, 165, 0]     # Orange
-  Mo: [128, 128, 128]   # Gray
-  Ag: [128, 128, 128]   # Gray
-  Sn: [128, 128, 128]   # Gray
-  Te: [255, 165, 0]     # Orange
-  Ba: [255, 165, 0]     # Orange
-  W: [128, 128, 128]    # Gray
-  Au: [218, 165, 32]    # Goldenrod
-  Hg: [128, 128, 128]   # Gray
-  Pb: [128, 128, 128]   # Gray
+CPK:
+  H: [255, 255, 255]
+  C: [0, 0, 0]
+  N: [0, 0, 255]
+  O: [255, 0, 0]
+  F: [0, 255, 0]
+  Cl: [0, 255, 0]
+  Br: [165, 42, 42]
+  I: [148, 0, 211]
+  P: [255, 165, 0]
+  S: [255, 255, 0]
+  B: [255, 192, 203]
+  Li: [128, 0, 128]
+  Na: [128, 0, 128]
+  Mg: [34, 139, 34]
+  Al: [128, 128, 128]
+  Si: [218, 165, 32]
+  K: [128, 0, 128]
+  Ca: [128, 128, 128]
+  Ti: [128, 128, 128]
+  Cr: [128, 128, 128]
+  Mn: [128, 128, 128]
+  Fe: [255, 165, 0]
+  Co: [255, 165, 0]
+  Ni: [165, 42, 42]
+  Cu: [165, 42, 42]
+  Zn: [165, 42, 42]
+  As: [255, 165, 0]
+  Se: [255, 165, 0]
+  Mo: [128, 128, 128]
+  Ag: [128, 128, 128]
+  Sn: [128, 128, 128]
+  Te: [255, 165, 0]
+  Ba: [255, 165, 0]
+  W: [128, 128, 128]
+  Au: [218, 165, 32]
+  Hg: [128, 128, 128]
+  Pb: [128, 128, 128]
   TDOS: [128, 128, 128]
-MP:  # Materials Project database colors for computational materials science
-  H: [255, 255, 255]    # White
-  He: [255, 192, 203]   # Pink
-  Li: [128, 0, 128]     # Purple
-  Be: [34, 139, 34]     # Forest Green
-  B: [255, 182, 193]    # Light Pink
-  C: [128, 128, 128]    # Gray
-  N: [0, 0, 255]        # Blue
-  O: [255, 0, 0]        # Red
-  F: [144, 238, 144]    # Light Green
-  Ne: [255, 182, 193]   # Light Pink
-  Na: [128, 0, 128]     # Purple
-  Mg: [34, 139, 34]     # Forest Green
-  Al: [255, 165, 0]     # Orange
-  Si: [240, 230, 140]   # Khaki
-  P: [255, 165, 0]      # Orange
-  S: [255, 255, 0]      # Yellow
-  Cl: [0, 255, 0]       # Green
-  Ar: [255, 192, 203]   # Pink
-  K: [128, 0, 128]      # Purple
-  Ca: [128, 128, 128]   # Gray
-  Sc: [255, 20, 147]    # Deep Pink
-  Ti: [128, 128, 128]   # Gray
-  V: [255, 20, 147]     # Deep Pink
-  Cr: [138, 43, 226]    # Blue Violet
-  Mn: [138, 43, 226]    # Blue Violet
-  Fe: [255, 165, 0]     # Orange
-  Co: [240, 230, 140]   # Khaki
-  Ni: [34, 139, 34]     # Forest Green
-  Cu: [255, 165, 0]     # Orange
-  Zn: [128, 128, 128]   # Gray
-  Ga: [255, 165, 0]     # Orange
-  Ge: [240, 230, 140]   # Khaki
-  As: [255, 165, 0]     # Orange
-  Se: [255, 255, 0]     # Yellow
-  Br: [165, 42, 42]     # Brown
-  Kr: [255, 192, 203]   # Pink
-  Rb: [128, 0, 128]     # Purple
-  Sr: [128, 128, 128]   # Gray
-  Y: [255, 20, 147]     # Deep Pink
-  Zr: [128, 128, 128]   # Gray
-  Nb: [255, 20, 147]    # Deep Pink
-  Mo: [138, 43, 226]    # Blue Violet
-  Tc: [138, 43, 226]    # Blue Violet
-  Ru: [138, 43, 226]    # Blue Violet
-  Rh: [240, 230, 140]   # Khaki
-  Pd: [34, 139, 34]     # Forest Green
-  Ag: [128, 128, 128]   # Gray
-  Cd: [128, 128, 128]   # Gray
-  In: [255, 165, 0]     # Orange
-  Sn: [240, 230, 140]   # Khaki
-  Sb: [255, 165, 0]     # Orange
-  Te: [255, 255, 0]     # Yellow
-  I: [148, 0, 211]      # Violet
-  Xe: [255, 192, 203]   # Pink
-  Cs: [128, 0, 128]     # Purple
-  Ba: [255, 165, 0]     # Orange
-  La: [255, 182, 193]   # Light Pink
-  Ce: [255, 182, 193]   # Light Pink
-  Pr: [255, 182, 193]   # Light Pink
-  Nd: [255, 182, 193]   # Light Pink
-  Pm: [255, 182, 193]   # Light Pink
-  Sm: [255, 182, 193]   # Light Pink
-  Eu: [255, 182, 193]   # Light Pink
-  Gd: [255, 182, 193]   # Light Pink
-  Tb: [255, 182, 193]   # Light Pink
-  Dy: [255, 182, 193]   # Light Pink
-  Ho: [255, 182, 193]   # Light Pink
-  Er: [255, 182, 193]   # Light Pink
-  Tm: [255, 182, 193]   # Light Pink
-  Yb: [255, 182, 193]   # Light Pink
-  Lu: [255, 182, 193]   # Light Pink
-  Hf: [128, 128, 128]   # Gray
-  Ta: [255, 20, 147]    # Deep Pink
-  W: [138, 43, 226]     # Blue Violet
-  Re: [138, 43, 226]    # Blue Violet
-  Os: [138, 43, 226]    # Blue Violet
-  Ir: [240, 230, 140]   # Khaki
-  Pt: [34, 139, 34]     # Forest Green
-  Au: [255, 215, 0]     # Gold
+MP:
+  H: [255, 255, 255]
+  He: [255, 192, 203]
+  Li: [128, 0, 128]
+  Be: [34, 139, 34]
+  B: [255, 182, 193]
+  C: [128, 128, 128]
+  N: [0, 0, 255]
+  O: [255, 0, 0]
+  F: [144, 238, 144]
+  Ne: [255, 182, 193]
+  Na: [128, 0, 128]
+  Mg: [34, 139, 34]
+  Al: [255, 165, 0]
+  Si: [240, 230, 140]
+  P: [255, 165, 0]
+  S: [255, 255, 0]
+  Cl: [0, 255, 0]
+  Ar: [255, 192, 203]
+  K: [128, 0, 128]
+  Ca: [128, 128, 128]
+  Sc: [255, 20, 147]
+  Ti: [128, 128, 128]
+  V: [255, 20, 147]
+  Cr: [138, 43, 226]
+  Mn: [138, 43, 226]
+  Fe: [255, 165, 0]
+  Co: [240, 230, 140]
+  Ni: [34, 139, 34]
+  Cu: [255, 165, 0]
+  Zn: [128, 128, 128]
+  Ga: [255, 165, 0]
+  Ge: [240, 230, 140]
+  As: [255, 165, 0]
+  Se: [255, 255, 0]
+  Br: [165, 42, 42]
+  Kr: [255, 192, 203]
+  Rb: [128, 0, 128]
+  Sr: [128, 128, 128]
+  Y: [255, 20, 147]
+  Zr: [128, 128, 128]
+  Nb: [255, 20, 147]
+  Mo: [138, 43, 226]
+  Tc: [138, 43, 226]
+  Ru: [138, 43, 226]
+  Rh: [240, 230, 140]
+  Pd: [34, 139, 34]
+  Ag: [128, 128, 128]
+  Cd: [128, 128, 128]
+  In: [255, 165, 0]
+  Sn: [240, 230, 140]
+  Sb: [255, 165, 0]
+  Te: [255, 255, 0]
+  I: [148, 0, 211]
+  Xe: [255, 192, 203]
+  Cs: [128, 0, 128]
+  Ba: [255, 165, 0]
+  La: [255, 182, 193]
+  Ce: [255, 182, 193]
+  Pr: [255, 182, 193]
+  Nd: [255, 182, 193]
+  Pm: [255, 182, 193]
+  Sm: [255, 182, 193]
+  Eu: [255, 182, 193]
+  Gd: [255, 182, 193]
+  Tb: [255, 182, 193]
+  Dy: [255, 182, 193]
+  Ho: [255, 182, 193]
+  Er: [255, 182, 193]
+  Tm: [255, 182, 193]
+  Yb: [255, 182, 193]
+  Lu: [255, 182, 193]
+  Hf: [128, 128, 128]
+  Ta: [255, 20, 147]
+  W: [138, 43, 226]
+  Re: [138, 43, 226]
+  Os: [138, 43, 226]
+  Ir: [240, 230, 140]
+  Pt: [34, 139, 34]
+  Au: [255, 215, 0]
   TDOS: [128, 128, 128]
-  Hg: [128, 128, 128]   # Gray
-  Tl: [255, 165, 0]     # Orange
-  Pb: [128, 128, 128]   # Gray
-  Bi: [255, 165, 0]     # Orange
-  Th: [255, 182, 193]   # Light Pink
-  U: [255, 182, 193]    # Light Pink
-Extras:  # for custom element types
-  Xbcp: [0, 0, 255]  # bond critical point
-  Xrcp: [255, 0, 0]  # ring critical point
-  Xccp: [255, 255, 0]  # cage critical point
-  Xncp: [0, 255, 255]  # non-nuclear attractor
+  Hg: [128, 128, 128]
+  Tl: [255, 165, 0]
+  Pb: [128, 128, 128]
+  Bi: [255, 165, 0]
+  Th: [255, 182, 193]
+  U: [255, 182, 193]
+Extras:
+  Xbcp: [0, 0, 255]
+  Xrcp: [255, 0, 0]
+  Xccp: [255, 255, 0]
+  Xncp: [0, 255, 255]

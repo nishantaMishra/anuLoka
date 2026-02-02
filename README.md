@@ -36,6 +36,8 @@ The Installation of dependencies can be done within this virtual environment.
 ```bash
 python3 -m ase gui 
 python3 -m ase -T gui /path/to/your/directory/or/file.  
+
+ python3 -m ase.gui.ag_qt #QT version
 ```
 
 

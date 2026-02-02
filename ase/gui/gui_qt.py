@@ -1,0 +1,1486 @@
+# fmt: off
+
+"""
+Qt-based GUI module for ASE-GUI.
+
+This is a Qt (PyQt5) port of the original Tkinter-based gui.py.
+"""
+
+import pickle
+import subprocess
+import sys
+from functools import partial
+from time import time
+
+import numpy as np
+
+# Use Qt-based UI module instead of Tkinter
+import ase.gui.ui_qt as ui
+from ase import Atoms, __version__
+from ase.gui.defaults import read_defaults
+from ase.gui.i18n import _
+from ase.gui.images import Images
+from ase.gui.nanoparticle_qt import SetupNanoparticle
+from ase.gui.nanotube_qt import SetupNanotube
+from ase.gui.observer import Observers
+from ase.gui.save_qt import save_dialog
+from ase.gui.settings_qt import Settings
+from ase.gui.status import Status
+from ase.gui.surfaceslab_qt import SetupSurfaceSlab
+from ase.gui.view_qt import View
+
+
+class GUIObservers:
+    def __init__(self):
+        self.new_atoms = Observers()
+        self.set_atoms = Observers()
+        self.change_atoms = Observers()
+
+
+class GUI(View):
+    ARROWKEY_SCAN = 0
+    ARROWKEY_MOVE = 1
+    ARROWKEY_ROTATE = 2
+
+    def __init__(self, images=None,
+                 rotations='',
+                 show_bonds=False, expr=None,
+                 workspace_dir=None):
+
+        if not isinstance(images, Images):
+            images = Images(images)
+
+        self.images = images
+
+        # Ordinary observers seem unused now, delete?
+        self.observers = []
+        self.obs = GUIObservers()
+
+        self.config = read_defaults()
+        if show_bonds:
+            self.config['show_bonds'] = True
+
+        # Workspace mode setup
+        self.workspace_mode = workspace_dir is not None
+        self.workspace_dir = workspace_dir
+        self.workspace_controller = None
+        self.file_explorer = None
+
+        menu = self.get_menu_data()
+
+        self.window = ui.ASEGUIWindow(close=self.exit, menu=menu,
+                                      config=self.config, scroll=self.scroll,
+                                      scroll_event=self.scroll_event,
+                                      press=self.press, move=self.move,
+                                      release=self.release,
+                                      resize=self.resize,
+                                      open_callback=self.open,
+                                      workspace_mode=self.workspace_mode)
+
+        super().__init__(rotations)
+        self.status = Status(self)
+
+        # Undo/Redo stacks and flags
+        self.undo_stack = []
+        self.redo_stack = []
+        self._is_restoring_state = False
+        self._pan_undo_recorded = False
+        self._max_undo = 200
+
+        self.subprocesses = []  # list of external processes
+        self.movie_window = None
+        self.simulation = {}  # Used by modules on Calculate menu.
+        self.module_state = {}  # Used by modules to store their state.
+
+        self.arrowkey_mode = self.ARROWKEY_SCAN
+        self.move_atoms_mask = None
+
+        # Tabs initialization - must be done before workspace initialization
+        self.tabs = {}  # Dictionary to store tabs and their associated Images
+        self.current_tab = None  # Track the currently active tab
+
+        # Add a tab control to the GUI
+        self.tab_control = ui.TabControl(self.window.win, self.switch_tab, gui=self)
+        self.tab_control.pack(side='top', fill='x')
+
+        self.tab_view_settings = {}  # Store view settings for each tab
+        self.tab_selection_state = {}  # Store selection state for each tab
+
+        self.set_frame(len(self.images) - 1, focus=True)
+
+        # Initialize workspace mode if directory provided
+        # This must come after set_frame which initializes scale, center, axes etc.
+        if self.workspace_mode:
+            self._initialize_workspace()
+
+        # Used to move the structure with the mouse
+        self.prev_pos = None
+        self.last_scroll_time = time()
+        self.orig_scale = self.scale
+
+        if len(self.images) > 1:
+            self.movie()
+
+        if expr is None:
+            expr = self.config['gui_graphs_string']
+
+        if expr is not None and expr != '' and len(self.images) > 1:
+            self.plot_graphs(expr=expr, ignore_if_nan=True)
+
+        # Pan mode state: when True, canvas cursor becomes a 4-spoked
+        # "move" cursor (Tk 'fleur') and user can drag to pan.
+        self.pan_mode = False
+        self.last_pan_pos = None
+
+    @property
+    def moving(self):
+        return self.arrowkey_mode != self.ARROWKEY_SCAN
+
+    def run(self):
+        self.window.run()
+
+    def toggle_move_mode(self, key=None):
+        self.toggle_arrowkey_mode(self.ARROWKEY_MOVE)
+
+    def toggle_rotate_mode(self, key=None):
+        self.toggle_arrowkey_mode(self.ARROWKEY_ROTATE)
+
+    def toggle_arrowkey_mode(self, mode):
+        # If not currently in given mode, activate it.
+        # Else, deactivate it (go back to SCAN mode)
+        assert mode != self.ARROWKEY_SCAN
+
+        if self.arrowkey_mode == mode:
+            self.arrowkey_mode = self.ARROWKEY_SCAN
+            self.move_atoms_mask = None
+        else:
+            self.arrowkey_mode = mode
+            self.move_atoms_mask = self.images.selected.copy()
+
+        self.draw()
+
+    def step(self, key):
+        d = {'Home': -10000000,
+             'Page-Up': -1,
+             'Page-Down': 1,
+             'End': 10000000}[key]
+        i = max(0, min(len(self.images) - 1, self.frame + d))
+        self.set_frame(i)
+        if self.movie_window is not None:
+            self.movie_window.frame_number.value = i
+
+    def copy_image(self, key=None):
+        self.images._images.append(self.atoms.copy())
+        self.images.filenames.append(None)
+
+        if self.movie_window is not None:
+            try:
+                self.movie_window.frame_number.scale.setMaximum(len(self.images))
+            except AttributeError:
+                pass  # Qt widget may have different API
+        self.step('End')
+
+    def _do_zoom(self, x):
+        """Utility method for zooming"""
+        self.scale *= x
+        self.draw()
+
+    def zoom(self, key):
+        """Zoom in/out on keypress or clicking menu item"""
+        # Record view change
+        self._push_undo('view_zoom')
+        x = {'+': 1.2, '-': 1 / 1.2}[key]
+        self._do_zoom(x)
+
+    def scroll_event(self, event):
+        """Zoom in/out when using mouse wheel"""
+        SHIFT = event.modifier == 'shift'
+        x = 1.0
+        if event.button == 4 or event.delta > 0:
+            x = 1.0 + (1 - SHIFT) * 0.2 + SHIFT * 0.01
+        elif event.button == 5 or event.delta < 0:
+            x = 1.0 / (1.0 + (1 - SHIFT) * 0.2 + SHIFT * 0.01)
+        self._do_zoom(x)
+
+    def settings(self):
+        return Settings(self)
+
+    def scroll(self, event):
+        shift = 0x1
+        ctrl = 0x4
+        alt_l = 0x8  # Also Mac Command Key
+        mac_option_key = 0x10
+
+        use_small_step = bool(event.state & shift)
+        rotate_into_plane = bool(event.state & (ctrl | alt_l | mac_option_key))
+
+        # When rotating atoms with arrow keys, we want standard 2D arrow directions
+        # not rotate-into-plane behavior. Disable rotate_into_plane in ROTATE mode.
+        # Only use rotate_into_plane for view panning (SCAN mode).
+        if self.arrowkey_mode == self.ARROWKEY_ROTATE or self.arrowkey_mode == self.ARROWKEY_MOVE:
+            rotate_into_plane = False
+
+        # Normalize key names: handle common variants like 'KP_Up',
+        # 'KeyPad-Up' etc. Prefer the already-normalized `event.key`
+        # (set by `ui.bind`), but fall back to `event.keysym` when
+        # necessary. Strip known keypad prefixes and lowercase.
+        key = getattr(event, 'key', None)
+        if not key:
+            # Some event objects may provide `keysym` instead of `key`.
+            key = getattr(event, 'keysym', '')
+        key = str(key)
+        # Accept keys like 'ArrowLeft' / 'ArrowRight' (common on some platforms)
+        if key.lower().startswith('arrow'):
+            key = key[len('arrow'):]
+        # Strip common keypad prefixes
+        for prefix in ('kp_', 'kp', 'keypad_', 'keypad-'):
+            if key.lower().startswith(prefix):
+                key = key[len(prefix):]
+                break
+        key = key.strip().lower()
+
+        dxdydz = {'up': (0, 1 - rotate_into_plane, rotate_into_plane),
+                  'down': (0, -1 + rotate_into_plane, -rotate_into_plane),
+                  'right': (1 - rotate_into_plane, 0, rotate_into_plane),
+                  'left': (-1 + rotate_into_plane, 0, -rotate_into_plane)}.get(key, None)
+
+        # Get scroll direction using shift + right mouse button
+        # event.type == '6' is mouse motion, see:
+        # http://infohost.nmt.edu/tcc/help/pubs/tkinter/web/event-types.html
+        if event.type == '6':
+            cur_pos = np.array([event.x, -event.y])
+            # Continue scroll if button has not been released
+            if self.prev_pos is None or time() - self.last_scroll_time > .5:
+                self.prev_pos = cur_pos
+                self.last_scroll_time = time()
+            else:
+                dxdy = cur_pos - self.prev_pos
+                dxdydz = np.append(dxdy, [0])
+                self.prev_pos = cur_pos
+                self.last_scroll_time = time()
+
+        if dxdydz is None:
+            return
+
+        vec = 0.1 * np.dot(self.axes, dxdydz)
+        if use_small_step:
+            vec *= 0.1
+
+        if self.arrowkey_mode == self.ARROWKEY_MOVE:
+            # Record atomic positions before modifying
+            self._push_undo('atoms_move')
+            if self.move_atoms_mask is None:
+                self.move_atoms_mask = self.images.selected.copy()
+            self.atoms.positions[self.move_atoms_mask[:len(self.atoms)]] += vec
+            self.set_frame()
+        elif self.arrowkey_mode == self.ARROWKEY_ROTATE:
+            # Record atomic positions before modifying
+            self._push_undo('atoms_rotate')
+            if self.move_atoms_mask is None:
+                self.move_atoms_mask = self.images.selected.copy()
+            mask = self.move_atoms_mask[:len(self.atoms)]
+            if np.any(mask):
+                center = self.atoms.positions[mask].mean(axis=0)
+                tmp_atoms = self.atoms[mask]
+                tmp_atoms.positions -= center
+                # Rotate around axis perpendicular to arrow direction in screen space
+                # For intuitive rotation: up/down arrows rotate around horizontal axis,
+                # left/right arrows rotate around vertical axis
+                # Cross vec with screen Z-axis to get perpendicular rotation axis
+                screen_z = np.dot(self.axes, [0, 0, 1])
+                rotation_axis = np.cross(vec, screen_z)
+                rotation_angle = 50 * np.linalg.norm(vec)
+                if np.linalg.norm(rotation_axis) > 1e-10:
+                    tmp_atoms.rotate(rotation_angle, rotation_axis)
+                self.atoms.positions[mask] = tmp_atoms.positions + center
+            self.set_frame()
+        else:
+            # View panning via scroll
+            self._push_undo('view_pan')
+            scale = self.orig_scale / (3 * self.scale)
+            self.center -= vec * scale
+            self.draw()
+
+    def delete_selected_atoms(self, widget=None, data=None):
+        import ase.gui.ui_qt as ui
+        nselected = sum(self.images.selected)
+        if nselected and ui.ask_question(_('Delete atoms'),
+                                         _('Delete selected atoms?')):
+            self.really_delete_selected_atoms()
+
+    def really_delete_selected_atoms(self):
+        # Record state before deletion
+        self._push_undo('atoms_delete')
+        mask = self.images.selected[:len(self.atoms)]
+        del self.atoms[mask]
+
+        # Will remove selection in other images, too
+        self.images.selected[:] = False
+        self.set_frame()
+        self.draw()
+
+    def constraints_window(self):
+        from ase.gui.constraints_qt import Constraints
+        self._constraints_window = Constraints(self)  # Store reference
+
+    def set_selected_atoms(self, selected):
+        newmask = np.zeros(len(self.images.selected), bool)
+        newmask[selected] = True
+
+        if np.array_equal(newmask, self.images.selected):
+            return
+
+        # (By creating newmask, we can avoid resetting the selection in
+        # case the selected indices are invalid)
+        self.images.selected[:] = newmask
+        self.draw()
+
+    def select_all(self, key=None):
+        self.images.selected[:] = True
+        self.draw()
+
+    def invert_selection(self, key=None):
+        self.images.selected[:] = ~self.images.selected
+        self.draw()
+
+    def select_constrained_atoms(self, key=None):
+        self.images.selected[:] = ~self.images.get_dynamic(self.atoms)
+        self.draw()
+
+    def select_immobile_atoms(self, key=None):
+        if len(self.images) > 1:
+            R0 = self.images[0].positions
+            for atoms in self.images[1:]:
+                R = atoms.positions
+                self.images.selected[:] = ~(np.abs(R - R0) > 1.0e-10).any(1)
+        self.draw()
+
+    def movie(self):
+        from ase.gui.movie_qt import Movie
+        # Always create a new movie window - it will be properly initialized
+        self.movie_window = Movie(self)
+
+    def plot_graphs(self, key=None, expr=None, ignore_if_nan=False):
+        from ase.gui.graphs_qt import Graphs
+        # Store reference to prevent garbage collection
+        self.graphs_window = Graphs(self)
+        if expr is not None:
+            self.graphs_window.plot(expr=expr, ignore_if_nan=ignore_if_nan)
+    
+    def plot_dos_window(self, key=None):
+        """Open DOS plotting window."""
+        from ase.gui.dos_plot_qt import dos_plot_window
+        dos_plot_window(self)
+
+    def plot_potential_window(self, key=None):
+        """Open Potential plotting window."""
+        from ase.gui.potential_plot_qt import potential_plot_window
+        potential_plot_window(self)
+
+    def pipe(self, task, data):
+        process = subprocess.Popen([sys.executable, '-m', 'ase.gui.pipe'],
+                                   stdout=subprocess.PIPE,
+                                   stdin=subprocess.PIPE)
+        pickle.dump((task, data), process.stdin)
+        process.stdin.close()
+        # Either process writes a line, or it crashes and line becomes ''
+        line = process.stdout.readline().decode('utf8').strip()
+
+        if line != 'GUI:OK':
+            if line == '':  # Subprocess probably crashed
+                line = _('Failure in subprocess')
+            self.bad_plot(line)
+        else:
+            self.subprocesses.append(process)
+        return process
+
+    def bad_plot(self, err, msg=''):
+        ui.error(_('Plotting failed'), '\n'.join([str(err), msg]).strip())
+
+    def neb(self):
+        from ase.utils.forcecurve import fit_images
+        try:
+            forcefit = fit_images(self.images)
+        except Exception as err:
+            self.bad_plot(err, _('Images must have energies and forces, '
+                                 'and atoms must not be stationary.'))
+        else:
+            self.pipe('neb', forcefit)
+
+    def bulk_modulus(self):
+        try:
+            v = [abs(np.linalg.det(atoms.cell)) for atoms in self.images]
+            e = [self.images.get_energy(a) for a in self.images]
+            from ase.eos import EquationOfState
+            eos = EquationOfState(v, e)
+            plotdata = eos.getplotdata()
+        except Exception as err:
+            self.bad_plot(err, _('Images must have energies '
+                                 'and varying cell.'))
+        else:
+            self.pipe('eos', plotdata)
+
+    def reciprocal(self):
+        if self.atoms.cell.rank != 3:
+            self.bad_plot(_('Requires 3D cell.'))
+            return None
+
+        cell = self.atoms.cell.uncomplete(self.atoms.pbc)
+        bandpath = cell.bandpath(npoints=0)
+        return self.pipe('reciprocal', bandpath)
+
+    def add_tab(self, filename, images):
+        """Add a new tab with the filename as the title and associated Images."""
+        # Save current tab view/selection before switching, so it doesn't get
+        # reset when a new tab is added.
+        if self.current_tab is not None and self.current_tab in self.tabs:
+            try:
+                self.tab_view_settings[self.current_tab] = {
+                    'scale': self.scale,
+                    'center': self.center.copy(),
+                    'axes': self.axes.copy(),
+                    # Color settings per-tab
+                    'colormode': getattr(self, 'colormode', 'jmol'),
+                    'colors': getattr(self, 'colors', {}).copy() if hasattr(self, 'colors') else {},
+                    '_color_scheme': getattr(self, '_color_scheme', 'Jmol'),
+                    'colormode_data': getattr(self, 'colormode_data', None),
+                }
+            except Exception:
+                # Be lenient if any attribute is missing
+                self.tab_view_settings[self.current_tab] = {
+                    'scale': getattr(self, 'scale', 1.0),
+                    'center': getattr(self, 'center', np.zeros(3)).copy(),
+                    'axes': getattr(self, 'axes', np.eye(3)).copy(),
+                    'colormode': 'jmol',
+                    'colors': {},
+                    '_color_scheme': 'Jmol',
+                    'colormode_data': None,
+                }
+            if hasattr(self, 'images') and hasattr(self.images, 'selected'):
+                self.tab_selection_state[self.current_tab] = self.images.selected.copy()
+
+        if not isinstance(images, Images):
+            images = Images(images)
+
+        # Ensure this Images object has its own independent selection array
+        if hasattr(images, 'selected'):
+            images.selected = np.zeros(len(images.selected), bool)
+
+        tab_title = filename.split('/')[-1]  # Extract the file name from the path
+        # Pass full filepath so the TabControl can show it on hover
+        tab_id = self.tab_control.add_tab(tab_title, filepath=filename)
+        self.tabs[tab_id] = images
+        
+        # Visually select the new tab
+        self.tab_control.select_tab(tab_id)
+
+        # Make the new tab current and associate a view for it (inherit current
+        # GUI view so the new tab starts with the same view but remains independent).
+        self.current_tab = tab_id
+        self.images = images
+
+        # Reset color scheme to defaults for new tabs
+        default_scheme = self.config.get('default_color_scheme', 'Jmol')
+        default_mode = self.config.get('default_colormode', 'jmol')
+        self.colormode = default_mode
+        self._color_scheme = default_scheme
+        self.colors = self._load_color_scheme(default_scheme)
+        
+        try:
+            self.tab_view_settings[tab_id] = {
+                'scale': self.scale,
+                'center': self.center.copy(),
+                'axes': self.axes.copy(),
+                # Color settings for new tab (use defaults)
+                'colormode': default_mode,
+                'colors': self.colors.copy(),
+                '_color_scheme': default_scheme,
+                'colormode_data': getattr(self, 'colormode_data', None),
+            }
+        except Exception:
+            self.tab_view_settings[tab_id] = {
+                'scale': getattr(self, 'scale', 1.0),
+                'center': getattr(self, 'center', np.zeros(3)).copy(),
+                'axes': getattr(self, 'axes', np.eye(3)).copy(),
+                'colormode': default_mode,
+                'colors': self.colors.copy() if hasattr(self, 'colors') else {},
+                '_color_scheme': default_scheme,
+                'colormode_data': None,
+            }
+
+        # Initialize selection state for this tab
+        self.tab_selection_state[tab_id] = images.selected.copy()
+
+        # Now set frame and redraw (the switch_tab logic restores settings when
+        # switching between already added tabs; for a freshly added tab we keep
+        # the inherited view we stored above).
+        self.set_frame(len(self.images) - 1, focus=True)
+        self.draw()
+        
+        # Ensure the main window has focus after adding a new tab
+        # This is critical for arrow key functionality
+        try:
+            self.window.win.activateWindow()
+            self.window.win.setFocus()
+        except Exception:
+            pass
+
+        # Auto-open movie player if this is a VASP XDATCAR trajectory
+        if len(self.images) > 1 and 'xdatcar' in filename.lower():
+            try:
+                if self.movie_window is None:
+                    self.movie()
+            except Exception:
+                pass
+
+    def switch_tab(self, tab_id):
+        """Switch to the specified tab."""
+        if self.current_tab is not None and self.current_tab in self.tabs:
+            # Save the current view settings for the current tab
+            self.tab_view_settings[self.current_tab] = {
+                'scale': self.scale,
+                'center': self.center.copy(),
+                'axes': self.axes.copy(),
+                # Color settings per-tab
+                'colormode': getattr(self, 'colormode', 'jmol'),
+                'colors': getattr(self, 'colors', {}).copy() if hasattr(self, 'colors') else {},
+                '_color_scheme': getattr(self, '_color_scheme', 'Jmol'),
+                'colormode_data': getattr(self, 'colormode_data', None),
+            }
+            # Save the current selection state by copying the actual selection array
+            if hasattr(self.images, 'selected'):
+                self.tab_selection_state[self.current_tab] = self.images.selected.copy()
+
+        if tab_id in self.tabs:
+            self.current_tab = tab_id
+            self.images = self.tabs[tab_id]
+            
+            # Update the visual tab selection in the tab control
+            if hasattr(self, 'tab_control'):
+                self.tab_control.select_tab(tab_id)
+            
+            # Restore the saved selection state for the new tab
+            if tab_id in self.tab_selection_state:
+                # Ensure we have the right size array
+                saved_selection = self.tab_selection_state[tab_id]
+                if len(self.images.selected) != len(saved_selection):
+                    # Resize if needed
+                    new_selection = np.zeros(len(self.images.selected), bool)
+                    min_len = min(len(new_selection), len(saved_selection))
+                    new_selection[:min_len] = saved_selection[:min_len]
+                    self.images.selected[:] = new_selection
+                else:
+                    self.images.selected[:] = saved_selection
+            else:
+                # Default: no selection
+                self.images.selected[:] = False
+            
+            # Also reset the move_atoms_mask if in move/rotate mode
+            if self.arrowkey_mode != self.ARROWKEY_SCAN:
+                self.move_atoms_mask = self.images.selected.copy()
+            
+            self.set_frame(len(self.images) - 1, focus=True)
+
+            # Restore the saved view settings for the new tab, if available
+            if tab_id in self.tab_view_settings:
+                settings = self.tab_view_settings[tab_id]
+                self.scale = settings['scale']
+                self.center = settings['center']
+                self.axes = settings['axes']
+                # Restore color settings
+                self.colormode = settings.get('colormode', 'jmol')
+                self.colors = settings.get('colors', {}).copy()
+                self._color_scheme = settings.get('_color_scheme', 'Jmol')
+                if 'colormode_data' in settings and settings['colormode_data'] is not None:
+                    self.colormode_data = settings['colormode_data']
+            else:
+                # Default view settings if no saved settings exist
+                self.scale = 1.0
+                self.center = np.zeros(3)
+                self.axes = np.eye(3)
+
+            self.draw()
+            
+            # Ensure the main window has focus after switching tabs
+            # This is critical for arrow key functionality
+            try:
+                self.window.win.activateWindow()
+                self.window.win.setFocus()
+            except Exception:
+                pass
+
+    def close_tab(self, key=None):
+        """Close a tab. If tab_id is None, close the currently active tab."""
+        tab_id = self.current_tab
+        
+        if tab_id is None or tab_id not in self.tabs:
+            return False
+        
+        # Check if the tab has been modified
+        is_modified = getattr(self, f'_tab_modified_{tab_id}', False)
+        
+        if is_modified:
+            # Prompt user to save
+            from ase.gui.ui_qt import Dialog
+            from ase.gui.i18n import _
+            
+            # Get the tab title for display
+            tab_title = self.tab_control.tabs.get(tab_id, 'Untitled') if hasattr(self.tab_control, 'tabs') else 'Untitled'
+            
+            response = Dialog(
+                _('Unsaved changes'),
+                _('Do you want to save changes to {}?\n\nUnsaved changes will be lost.').format(tab_title),
+                buttons=[_('Save'), _('Discard'), _('Cancel')]
+            ).run()
+            
+            if response == _('Cancel'):
+                return False  # Don't close
+            elif response == _('Save'):
+                # Save the tab's content
+                try:
+                    # Switch to this tab first
+                    if self.current_tab != tab_id:
+                        self.switch_tab(tab_id)
+                    # Save the file
+                    self.save()
+                    # Clear the modified flag
+                    setattr(self, f'_tab_modified_{tab_id}', False)
+                except Exception as e:
+                    print(f"Error saving tab: {e}")
+                    return False
+            # If response is 'Discard', just continue to close
+        
+        # Remove the tab
+        try:
+            # Check if this is the last tab
+            remaining_tabs = [tid for tid in self.tabs.keys() if tid != tab_id]
+            
+            # Switch to another tab if this was the active tab
+            if self.current_tab == tab_id:
+                if remaining_tabs:
+                    # Switch to the first remaining tab
+                    self.switch_tab(remaining_tabs[0])
+                else:
+                    # No more tabs - exit the application
+                    self.exit()
+                    return True
+            
+            # Remove from tracking dictionaries
+            del self.tabs[tab_id]
+            if tab_id in self.tab_view_settings:
+                del self.tab_view_settings[tab_id]
+            if tab_id in self.tab_selection_state:
+                del self.tab_selection_state[tab_id]
+            if hasattr(self, f'_tab_modified_{tab_id}'):
+                delattr(self, f'_tab_modified_{tab_id}')
+            
+            # Remove from tab control
+            self.tab_control.remove_tab(tab_id)
+            
+            return True
+        except Exception as e:
+            print(f"Error closing tab: {e}")
+            return False
+    
+    def close_tab_by_index(self, tab_index):
+        """Close a tab by its visual index in the notebook."""
+        try:
+            # In Qt, directly work with tab index
+            if tab_index < 0 or tab_index >= self.tab_control.notebook.count():
+                return False
+            
+            # Find the tab_id that corresponds to this index
+            widget_at_index = self.tab_control.notebook.widget(tab_index)
+            target_tab_id = None
+            for tab_id, frame in self.tab_control.tabs.items():
+                if frame == widget_at_index:
+                    target_tab_id = tab_id
+                    break
+            
+            if target_tab_id is not None:
+                self.switch_tab(target_tab_id)
+                return self.close_tab()
+            return False
+        except Exception as e:
+            print(f"Error closing tab by index: {e}")
+            return False
+    
+    def move_tab_to_new_window(self, tab_index):
+        """Move a tab to a new window (opens a new GUI instance with that structure)."""
+        try:
+            # In Qt, directly work with tab index
+            if tab_index < 0 or tab_index >= self.tab_control.notebook.count():
+                return
+            
+            # Find the tab_id that corresponds to this index
+            widget_at_index = self.tab_control.notebook.widget(tab_index)
+            target_tab_id = None
+            for tab_id, frame in self.tab_control.tabs.items():
+                if frame == widget_at_index:
+                    target_tab_id = tab_id
+                    break
+            
+            if target_tab_id is None:
+                return
+            
+            # Get the images for this tab
+            images = self.tabs.get(target_tab_id)
+            if images is None:
+                return
+            
+            # Get the filepath if available
+            filepath = self.tab_control.filepaths.get(target_tab_id, None)
+            
+            # Create a new GUI window with these images
+            import subprocess
+            import sys
+            
+            # If we have a filepath, open it in a new window
+            if filepath:
+                # Launch new ASE GUI Qt instance with the file
+                subprocess.Popen([sys.executable, '-m', 'ase.gui.ag_qt', filepath])
+            else:
+                # For unsaved/modified tabs, we could save to temp and open
+                # For now, just show a message
+                from ase.gui.ui_qt import showerror
+                from ase.gui.i18n import _
+                showerror(_('Error'), 
+                        _('Cannot move unsaved tab to new window.\nPlease save the file first.'))
+                return
+            
+            # Close this tab after successfully opening in new window
+            self.switch_tab(target_tab_id)
+            self.close_tab()
+            return
+        except Exception as e:
+            print(f"Error moving tab to new window: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def open(self, button=None, filename=None):
+        # Prefer the native OS file dialog when available for a familiar
+        # experience. Fall back to the bundled ASEFileChooser if needed.
+        # Try desktop-native pickers first (Linux: zenity/kdialog), then
+        # tkinter's askopenfilename, then ASEFileChooser as a final fallback.
+        filename = filename or ''
+        if not filename:
+            try:
+                import subprocess
+                import shutil
+
+                # zenity is common on GNOME, kdialog on KDE
+                if shutil.which('zenity'):
+                    proc = subprocess.run(['zenity', '--file-selection'],
+                                           capture_output=True, text=True)
+                    if proc.returncode == 0:
+                        filename = proc.stdout.strip()
+                elif shutil.which('kdialog'):
+                    proc = subprocess.run(['kdialog', '--getopenfilename'],
+                                           capture_output=True, text=True)
+                    if proc.returncode == 0:
+                        filename = proc.stdout.strip()
+            except Exception:
+                filename = filename or ''
+
+        if not filename:
+            try:
+                from PyQt5.QtWidgets import QFileDialog
+                parent_widget = getattr(self.window, 'win', None)
+                filename, _filt = QFileDialog.getOpenFileName(parent_widget, _('Open ...'))
+                format = None
+            except Exception:
+                chooser = ui.ASEFileChooser(self.window.win)
+                filename = filename or chooser.go()
+                format = chooser.format
+        else:
+            format = None
+
+        if filename:
+            try:
+                new_images = Images()
+                new_images.read([filename], slice(None), format)
+                self.add_tab(filename, new_images)  # Use filename as tab title
+            except Exception as err:
+                ui.show_io_error(filename, err)
+                return  # Hmm.  Is self.images in a consistent state?
+            self.set_frame(len(self.images) - 1, focus=True)
+
+    def modify_atoms(self, key=None):
+        from ase.gui.modify_qt import ModifyAtoms
+        return ModifyAtoms(self)
+
+    def add_atoms(self, key=None):
+        from ase.gui.add_qt import AddAtoms
+        return AddAtoms(self)
+
+    def cell_editor(self, key=None):
+        from ase.gui.celleditor_qt import CellEditor
+        return CellEditor(self)
+
+    def atoms_editor(self, key=None):
+        from ase.gui.atomseditor_qt import AtomsEditor
+        return AtomsEditor(self)
+
+    def quick_info_window(self, key=None):
+        from ase.gui.quickinfo_qt import info
+        info_win = ui.Window(_('Quick Info'))
+        info_win.add(info(self))
+
+        # Update quickinfo window when we change frame
+        def update(window):
+            exists = window.exists
+            if exists:
+                # Only update if we exist
+                window.things[0].text = info(self)
+            return exists
+        self.attach(update, info_win)
+        return info_win
+
+    def surface_window(self):
+        return SetupSurfaceSlab(self)
+
+    def nanoparticle_window(self):
+        return SetupNanoparticle(self)
+
+    def nanotube_window(self):
+        return SetupNanotube(self)
+
+    def new_atoms(self, atoms):
+        "Set a new atoms object."
+        rpt = getattr(self.images, 'repeat', None)
+        self.images.repeat_images(np.ones(3, int))
+        self.images.initialize([atoms])
+        self.frame = 0  # Prevent crashes
+        self.images.repeat_images(rpt)
+        self.set_frame(frame=0, focus=True)
+        self.obs.new_atoms.notify()
+
+    def exit(self, event=None):
+        # Clean up workspace resources
+        if self.workspace_mode and self.workspace_controller:
+            self.workspace_controller.close_all_viewers()
+        
+        for process in self.subprocesses:
+            process.terminate()
+        self.window.close()
+
+    def _initialize_workspace(self):
+        """Initialize workspace mode with file explorer and controller."""
+        from ase.gui.file_explorer_qt import FileExplorer
+        from ase.gui.workspace_qt import WorkspaceController
+        from pathlib import Path
+        
+        # Create workspace controller
+        self.workspace_controller = WorkspaceController(self, self.workspace_dir)
+        
+        # Create file explorer in sidebar
+        if self.window.sidebar_frame:
+            self.file_explorer = FileExplorer(
+                self.window.sidebar_frame,
+                self.workspace_dir,
+                callback=self.workspace_controller.handle_file_selection
+            )
+            self.file_explorer.pack(fill='both', expand=True)
+            
+            # Update window title
+            workspace_name = Path(self.workspace_dir).name
+            self.window.win.setWindowTitle(f'ASE-GUI - Workspace: {workspace_name}')
+            
+            # Create an initial "Welcome" tab with empty structure
+            # This ensures the tab system is initialized properly
+            welcome_tab_id = self.tab_control.add_tab('Welcome', filepath='workspace')
+            self.tabs[welcome_tab_id] = self.images
+            self.current_tab = welcome_tab_id
+            
+            # Initialize view settings for the welcome tab
+            self.tab_view_settings[welcome_tab_id] = {
+                'scale': self.scale,
+                'center': self.center.copy(),
+                'axes': self.axes.copy()
+            }
+            self.tab_selection_state[welcome_tab_id] = self.images.selected.copy()
+
+    def new(self, key=None):
+        subprocess.Popen([sys.executable, '-m', 'ase', 'gui'])
+
+    def save(self, key=None):
+        return save_dialog(self)
+
+    def external_viewer(self, name):
+        from ase.visualize import view
+        return view(list(self.images), viewer=name)
+
+    def selected_atoms(self):
+        selection_mask = self.images.selected[:len(self.atoms)]
+        return self.atoms[selection_mask]
+
+    # Clipboard API (restored to fix Edit menu callbacks)
+    @property
+    def clipboard(self):
+        from ase.gui.clipboard_qt import AtomsClipboard
+        return AtomsClipboard(self.window.win)
+
+    def cut_atoms_to_clipboard(self, event=None):
+        # Record state before cutting (which deletes atoms)
+        self._push_undo('atoms_cut')
+        self.copy_atoms_to_clipboard(event)
+        self.really_delete_selected_atoms()
+
+    def copy_atoms_to_clipboard(self, event=None):
+        atoms = self.selected_atoms()
+        self.clipboard.set_atoms(atoms)
+
+    def paste_atoms_from_clipboard(self, event=None):
+        try:
+            atoms = self.clipboard.get_atoms()
+        except Exception as err:
+            ui.error(
+                'Cannot paste atoms',
+                'Pasting currently works only with the ASE JSON format.\n\n'
+                f'Original error:\n\n{err}')
+            return
+
+        if self.atoms == Atoms():
+            self.atoms.cell = atoms.cell
+            self.atoms.pbc = atoms.pbc
+        self.paste_atoms_onto_existing(atoms)
+
+    def paste_atoms_onto_existing(self, atoms):
+        selection = self.selected_atoms()
+        if len(selection):
+            paste_center = selection.positions.sum(axis=0) / len(selection)
+            atoms = atoms.copy()
+            atoms.cell = (1, 1, 1)
+            atoms.center(about=paste_center)
+
+        self.add_atoms_and_select(atoms)
+        self.move_atoms_mask = self.images.selected.copy()
+        self.arrowkey_mode = self.ARROWKEY_MOVE
+        self.draw()
+
+    def add_atoms_and_select(self, new_atoms):
+        # Record state before adding atoms
+        self._push_undo('atoms_add')
+        atoms = self.atoms
+        atoms += new_atoms
+
+        if len(atoms) > self.images.maxnatoms:
+            self.images.initialize(list(self.images),
+                                   self.images.filenames)
+
+        selected = self.images.selected
+        selected[:] = False
+        selected[len(atoms) - len(new_atoms):len(atoms)] = True
+
+        self.set_frame()
+        self.draw()
+
+    def align_view_along_axis(self, axis_type='a', reciprocal=False):
+        """Align view along crystallographic axis.
+        
+        Args:
+            axis_type: 'a', 'b', or 'c' for the crystallographic axis
+            reciprocal: If True, use reciprocal lattice vector (a*, b*, c*)
+        """
+        # Record view change
+        self._push_undo('view_align')
+        if self.atoms.cell.rank != 3:
+            ui.error(_('Error'), _('Requires 3D cell for axis alignment.'))
+            return
+        
+        axis_map = {'a': 0, 'b': 1, 'c': 2}
+        axis_idx = axis_map.get(axis_type.lower(), 0)
+        
+        if reciprocal:
+            # Get reciprocal lattice vectors
+            cell = self.atoms.cell.reciprocal()
+            axis_vector = cell[axis_idx]
+        else:
+            # Get direct lattice vectors
+            axis_vector = self.atoms.cell[axis_idx]
+        
+        # Normalize the axis vector
+        axis_vector = axis_vector / np.linalg.norm(axis_vector)
+        
+        # We want to look along this axis, so set it as the z-direction
+        # Create a rotation matrix that aligns axis_vector with [0, 0, 1]
+        z_axis = np.array([0.0, 0.0, 1.0])
+        
+        # If vectors are already aligned, no rotation needed
+        if np.allclose(axis_vector, z_axis):
+            self.axes = np.eye(3)
+        elif np.allclose(axis_vector, -z_axis):
+            self.axes = np.diag([1, -1, -1])
+        else:
+            # Rotation axis is perpendicular to both vectors
+            rot_axis = np.cross(axis_vector, z_axis)
+            rot_axis = rot_axis / np.linalg.norm(rot_axis)
+            
+            # Rotation angle
+            cos_angle = np.dot(axis_vector, z_axis)
+            angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
+            
+            # Rodrigues rotation formula
+            K = np.array([[0, -rot_axis[2], rot_axis[1]],
+                         [rot_axis[2], 0, -rot_axis[0]],
+                         [-rot_axis[1], rot_axis[0], 0]])
+            
+            R = (np.eye(3) + np.sin(angle) * K + 
+                 (1 - np.cos(angle)) * np.dot(K, K))
+            
+            self.axes = R.T
+        
+        self.draw()
+
+    def align_along_a(self, key=None):
+        """Align view along a-axis (direct lattice)."""
+        self.align_view_along_axis('a', reciprocal=False)
+
+    def align_along_b(self, key=None):
+        """Align view along b-axis (direct lattice)."""
+        self.align_view_along_axis('b', reciprocal=False)
+
+    def align_along_c(self, key=None):
+        """Align view along c-axis (direct lattice)."""
+        self.align_view_along_axis('c', reciprocal=False)
+
+    def align_along_a_star(self, key=None):
+        """Align view along a*-axis (reciprocal lattice)."""
+        self.align_view_along_axis('a', reciprocal=True)
+
+    def align_along_b_star(self, key=None):
+        """Align view along b*-axis (reciprocal lattice)."""
+        self.align_view_along_axis('b', reciprocal=True)
+
+    def align_along_c_star(self, key=None):
+        """Align view along c*-axis (reciprocal lattice)."""
+        self.align_view_along_axis('c', reciprocal=True)
+
+    def wrap_atoms(self, key=None):
+        """Wrap atoms around the unit cell."""
+        # Record positions before wrapping
+        self._push_undo('atoms_wrap')
+        for atoms in self.images:
+            atoms.wrap()
+        self.set_frame()
+
+    def get_menu_data(self):
+        M = ui.MenuItem
+        return [
+            (_('_File'),
+             [M(_('_Open'), self.open, 'Ctrl+O'),
+              M(_('_New'), self.new, 'Ctrl+N'),
+              M(_('_Save'), self.save, 'Ctrl+S'),
+              M(_('_Close Tab'), self.close_tab, 'Ctrl+W'),
+              M('---'),
+              M(_('_Quit'), self.exit, 'Ctrl+Q')]),
+
+            (_('_Edit'),
+             [
+              # Undo/Redo at the top
+              M(_('_Undo'), self.undo, 'Ctrl+Z'),
+              M(_('_Redo'), self.redo, 'Ctrl+Y'),
+              M('---'),
+              M(_('Select _all'), self.select_all),
+              M(_('_Invert selection'), self.invert_selection),
+              M(_('Select _constrained atoms'), self.select_constrained_atoms),
+              M(_('Select _immobile atoms'), self.select_immobile_atoms),
+              # M('---'),
+              M(_('_Cut'), self.cut_atoms_to_clipboard, 'Ctrl+X'),
+              M(_('_Copy'), self.copy_atoms_to_clipboard, 'Ctrl+C'),
+              M(_('_Paste'), self.paste_atoms_from_clipboard, 'Ctrl+V'),
+              M('---'),
+              M(_('Hide selected atoms'), self.hide_selected),
+              M(_('Show selected atoms'), self.show_selected),
+              M('---'),
+              # Remove Ctrl+Y from Modify to free it for Redo
+              M(_('_Modify'), self.modify_atoms),
+              M(_('_Add atoms'), self.add_atoms, 'Ctrl+A'),
+              M(_('_Delete selected atoms'), self.delete_selected_atoms,
+                'Backspace'),
+              M(_('Edit _cell …'), self.cell_editor, 'Ctrl+E'),
+              M(_('Edit _atoms …'), self.atoms_editor, 'A'),
+              M('---'),
+              M(_('_First image'), self.step, 'Home'),
+              M(_('_Previous image'), self.step, 'Page-Up'),
+              M(_('_Next image'), self.step, 'Page-Down'),
+              M(_('_Last image'), self.step, 'End'),
+              M(_('Append image copy'), self.copy_image)]),
+
+            (_('_View'),
+             [M(_('Show _unit cell'), self.toggle_show_unit_cell, 'Ctrl+U',
+                value=self.config['show_unit_cell']),
+              M(_('Show _axes'), self.toggle_show_axes,
+                value=self.config['show_axes']),
+              M(_('Show _bonds'), self.toggle_show_bonds, 'Ctrl+B',
+                value=self.config['show_bonds']),
+              M(_('3D atom rendering'), self.toggle_3d_rendering,
+                value=self.config['render_3d_atoms']),
+              M(_('Show _velocities'), self.toggle_show_velocities, 'Ctrl+G',
+                value=False),
+              M(_('Show _forces'), self.toggle_show_forces, 'Ctrl+F',
+                value=False),
+              M(_('Show _magmoms'), self.toggle_show_magmoms,
+                value=False),
+              M(_('Show _Labels'), self.show_labels,
+                choices=[_('_None'),
+                         _('Atom _Index'),
+                         _('_Magnetic Moments'),  # XXX check if exist
+                         _('_Element Symbol'),
+                         _('_Initial Charges'),  # XXX check if exist
+                         ]),
+              M('---'),
+              M(_('Quick Info ...'), self.quick_info_window, 'Ctrl+I'),
+              M(_('Repeat ...'), self.repeat_window, 'R'),
+              M(_('Rotate ...'), self.rotate_window),
+              M(_('Colors ...'), self.colors_window, 'C'),
+              # TRANSLATORS: verb
+              M(_('Focus'), self.focus, 'F'),
+              M(_('Zoom in'), self.zoom, '+'),
+              M(_('Zoom out'), self.zoom, '-'),
+              M(_('Change View'),
+                submenu=[
+                    M(_('Reset View'), self.reset_view, '='),
+                    M('---'),
+                    M(_('xy-plane'), self.set_view, 'Z'),
+                    M(_('yz-plane'), self.set_view, 'X'),
+                    M(_('zx-plane'), self.set_view, 'Y'),
+                    M(_('yx-plane'), self.set_view, 'Shift+Z'),
+                    M(_('zy-plane'), self.set_view, 'Shift+X'),
+                    M(_('xz-plane'), self.set_view, 'Shift+Y'),
+                    M('---'),
+                    M(_('a2,a3-plane'), self.set_view, 'I'),
+                    M(_('a3,a1-plane'), self.set_view, 'J'),
+                    M(_('a1,a2-plane'), self.set_view, 'K'),
+                    M(_('a3,a2-plane'), self.set_view, 'Shift+I'),
+                    M(_('a1,a3-plane'), self.set_view, 'Shift+J'),
+                    M(_('a2,a1-plane'), self.set_view, 'Shift+K'),
+                    M('---'),
+                    # Toggle interactive pan mode: change cursor and allow drag-to-pan
+                    M(_('Pan'), self.toggle_pan_mode, 'P'),
+                    M('---'),
+                    M(_('Along a-axis'), self.align_along_a),
+                    M(_('Along b-axis'), self.align_along_b),
+                    M(_('Along c-axis'), self.align_along_c),
+                    M(_('Along a*-axis'), self.align_along_a_star),
+                    M(_('Along b*-axis'), self.align_along_b_star),
+                    M(_('Along c*-axis'), self.align_along_c_star
+                    )]),
+              M(_('Settings ...'), self.settings),
+              M('---'),
+              M(_('VMD'), partial(self.external_viewer, 'vmd')),
+              M(_('RasMol'), partial(self.external_viewer, 'rasmol')),
+              M(_('xmakemol'), partial(self.external_viewer, 'xmakemol')),
+              M(_('avogadro'), partial(self.external_viewer, 'avogadro'))]),
+
+            (_('_Tools'),
+             [M(_('Graphs ...'), self.plot_graphs),
+              M(_('Movie ...'), self.movie),
+              M(_('Plot DOS ...'), self.plot_dos_window),
+              M(_('Plot Potential ...'), self.plot_potential_window),
+              M(_('Constraints ...'), self.constraints_window),
+              M(_('Render scene ...'), self.render_window),
+              M(_('_Move selected atoms'), self.toggle_move_mode, 'Ctrl+M'),
+              M(_('_Rotate selected atoms'), self.toggle_rotate_mode,
+                'Ctrl+R'),
+              M(_('NE_B plot'), self.neb),
+              M(_('B_ulk Modulus'), self.bulk_modulus),
+              M(_('Reciprocal space ...'), self.reciprocal),
+              M(_('Wrap atoms'), self.wrap_atoms, 'Ctrl+Shift+W')]),
+
+            # TRANSLATORS: Set up (i.e. build) surfaces, nanoparticles, ...
+            (_('_Setup'),
+             [M(_('_Surface slab'), self.surface_window, disabled=False),
+              M(_('_Nanoparticle'),
+                self.nanoparticle_window),
+              M(_('Nano_tube'), self.nanotube_window)]),
+
+            # (_('_Calculate'),
+            # [M(_('Set _Calculator'), self.calculator_window, disabled=True),
+            #  M(_('_Energy and Forces'), self.energy_window, disabled=True),
+            #  M(_('Energy Minimization'), self.energy_minimize_window,
+            #    disabled=True)]),
+
+            (_('_Helped'),
+             [M(_('_About'), partial(
+                 ui.about, 'ASE-GUI',
+                 version=__version__,
+                 webpage='https://ase-lib.org/ase/gui/gui.html')),
+              M(_('Webpage ...'), webpage)])]
+
+    def attach(self, function, *args, **kwargs):
+        self.observers.append((function, args, kwargs))
+
+    def call_observers(self):
+        # Use function return value to determine if we keep observer
+        self.observers = [(function, args, kwargs) for (function, args, kwargs)
+                          in self.observers if function(*args, **kwargs)]
+
+    def repeat_poll(self, callback, ms, ensure_update=True):
+        """Invoke callback(gui=self) every ms milliseconds.
+
+        This is useful for polling a resource for updates to load them
+        into the GUI.  The GUI display will be hence be updated after
+        each call; pass ensure_update=False to circumvent this.
+
+        Polling stops if the callback function raises StopIteration.
+
+        Example to run a movie manually, then quit::
+
+            from ase.collections import g2
+            from ase.gui.gui_qt import GUI
+
+            names = iter(g2.names)
+
+            def main(gui):
+                try:
+                    name = next(names)
+                except StopIteration:
+                    gui.window.win.quit()
+                else:
+                    atoms = g2[name]
+                    gui.images.initialize([atoms])
+
+            gui = GUI()
+            gui.repeat_poll(main, 30)
+            gui.run()"""
+        from PyQt5.QtCore import QTimer
+
+        def callbackwrapper():
+            try:
+                callback(gui=self)
+            except StopIteration:
+                pass
+            finally:
+                # Reinsert self so we get called again:
+                QTimer.singleShot(ms, callbackwrapper)
+
+            if ensure_update:
+                self.set_frame()
+                self.draw()
+
+        QTimer.singleShot(ms, callbackwrapper)
+
+
+    # --- Undo/Redo helpers ---
+    def _snapshot_state(self):
+        try:
+            # Capture full atoms object state for structural changes
+            atoms_snapshot = self.atoms.copy() if len(self.atoms) else None
+        except Exception:
+            atoms_snapshot = None
+        try:
+            sel = self.images.selected.copy()
+        except Exception:
+            sel = None
+        return {
+            'frame': int(getattr(self, 'frame', 0)),
+            'atoms': atoms_snapshot,  # Full atoms copy for add/delete operations
+            'axes': getattr(self, 'axes', np.eye(3)).copy(),
+            'center': getattr(self, 'center', np.zeros(3)).copy(),
+            'scale': float(getattr(self, 'scale', 1.0)),
+            'selection': sel
+        }
+
+    def _apply_state(self, state):
+        self._is_restoring_state = True
+        try:
+            # Restore frame first (does not change axes/center/scale)
+            target_frame = state.get('frame', self.frame)
+            if 0 <= target_frame < len(self.images):
+                # set_frame triggers draw; we'll redraw at end anyway
+                self.set_frame(target_frame)
+
+            # Restore full atoms if available (for add/delete operations)
+            atoms_snapshot = state.get('atoms')
+            if atoms_snapshot is not None:
+                # Replace the entire atoms object in the current frame
+                self.images._images[self.frame] = atoms_snapshot.copy()
+                # Don't set self.atoms directly - it's a property without setter
+                # Update maxnatoms if needed
+                if len(self.images[self.frame]) > self.images.maxnatoms:
+                    self.images.maxnatoms = len(self.images[self.frame])
+                # Resize selection array if atom count changed
+                if len(self.images.selected) != len(self.images[self.frame]):
+                    old_selected = self.images.selected.copy()
+                    self.images.selected = np.zeros(len(self.images[self.frame]), dtype=bool)
+                    n = min(len(self.images.selected), len(old_selected))
+                    self.images.selected[:n] = old_selected[:n]
+
+            # Restore view parameters
+            axes = state.get('axes')
+            center = state.get('center')
+            scale = state.get('scale')
+            if axes is not None:
+                self.axes = axes
+            if center is not None:
+                self.center = center
+            if scale is not None:
+                self.scale = scale
+
+            # Restore selection if compatible
+            sel = state.get('selection')
+            if sel is not None and hasattr(self.images, 'selected'):
+                if len(self.images.selected) == len(sel):
+                    self.images.selected[:] = sel
+                else:
+                    # Resize safely
+                    new_sel = np.zeros_like(self.images.selected, dtype=bool)
+                    n = min(len(new_sel), len(sel))
+                    new_sel[:n] = sel[:n]
+                    self.images.selected[:] = new_sel
+
+            # After restoring, redraw (set_frame is needed to sync internal state)
+            self.set_frame()
+            self.draw()
+        finally:
+            self._is_restoring_state = False
+
+    def _push_undo(self, reason=''):
+        if self._is_restoring_state:
+            return
+        try:
+            self.undo_stack.append(self._snapshot_state())
+            if len(self.undo_stack) > self._max_undo:
+                self.undo_stack = self.undo_stack[-self._max_undo:]
+            self.redo_stack.clear()
+        except Exception:
+            # Be robust; never block user interaction
+            pass
+
+    def undo(self, key=None):
+        if not self.undo_stack:
+            return
+        # Push current to redo, restore last undo
+        current = self._snapshot_state()
+        state = self.undo_stack.pop()
+        self.redo_stack.append(current)
+        self._apply_state(state)
+
+    def redo(self, key=None):
+        if not self.redo_stack:
+            return
+        current = self._snapshot_state()
+        state = self.redo_stack.pop()
+        self.undo_stack.append(current)
+        self._apply_state(state)
+    # --- end Undo/Redo helpers ---
+
+    # --- Added pan utilities ---
+    def toggle_pan_mode(self, key=None):
+        """Toggle pan mode and update canvas cursor to a four-spoked asterisk."""
+        from PyQt5.QtCore import Qt
+        self.pan_mode = not getattr(self, "pan_mode", False)
+        try:
+            canvas = getattr(self.window, "canvas", None)
+            if canvas is not None:
+                if self.pan_mode:
+                    canvas.setCursor(Qt.OpenHandCursor)
+                else:
+                    canvas.unsetCursor()
+        except Exception:
+            pass
+        try:
+            # ensure GUI keeps focus for keyboard shortcuts
+            self.window.win.setFocus()
+        except Exception:
+            pass
+        return self.pan_mode
+
+    def press(self, event):
+        """Handle mouse press. Start panning if pan_mode is active."""
+        from PyQt5.QtCore import Qt
+        if getattr(self, "pan_mode", False):
+            try:
+                # Store start position (pixels) and original center
+                self._pan_start = np.array([event.x, event.y])
+                self._pan_orig_center = self.center.copy()
+                self._pan_undo_recorded = False
+                # Change to closed hand cursor while dragging
+                canvas = getattr(self.window, "canvas", None)
+                if canvas is not None:
+                    canvas.setCursor(Qt.ClosedHandCursor)
+                # Ensure focus so keyboard shortcuts still work
+                try:
+                    self.window.win.setFocus()
+                except Exception:
+                    pass
+            except Exception:
+                # If anything goes wrong, ignore and fall back
+                self._pan_start = None
+            return
+        # Default behaviour - delegate to View.press
+        try:
+            return super().press(event)
+        except Exception:
+            return None
+
+    def move(self, event):
+        """Handle mouse motion. If panning, compute displacement and update center."""
+        if getattr(self, "pan_mode", False) and getattr(self, "_pan_start", None) is not None:
+            try:
+                # Record undo only once per pan gesture
+                if not self._pan_undo_recorded:
+                    self._push_undo('view_pan_mode')
+                    self._pan_undo_recorded = True
+
+                cur = np.array([event.x, event.y])
+                delta = cur - self._pan_start  # pixels: +x right, +y down
+
+                # Convert pixel delta to a world displacement.
+                # Map pixel fraction to world by scaling with original scale and axes.
+                try:
+                    w, h = self.window.size
+                except Exception:
+                    w, h = 450.0, 450.0
+
+                # normalized screen displacement (right, up)
+                frac = np.array([delta[0] / max(1.0, w), -delta[1] / max(1.0, h), 0.0])
+
+                # Choose a sensible mapping to world coordinates using axes and scale.
+                # The factor controls sensitivity; tune if needed.
+                sensitivity = max(0.5, self.orig_scale)  # avoid too small numbers
+                world_vec = (frac[0] * self.axes[:, 0] + frac[1] * self.axes[:, 1]) * sensitivity
+
+                # Apply pan relative to original center so panning is smooth while dragging
+                self.center = self._pan_orig_center - world_vec
+                self.draw()
+            except Exception:
+                pass
+            return
+
+        # Not panning: delegate to View.move
+        try:
+            return super().move(event)
+        except Exception:
+            return None
+
+    def release(self, event):
+        """End panning on mouse release (cleanup)."""
+        from PyQt5.QtCore import Qt
+        if getattr(self, "pan_mode", False) and getattr(self, "_pan_start", None) is not None:
+            try:
+                del self._pan_start
+                del self._pan_orig_center
+                self._pan_undo_recorded = False
+                # Restore open hand cursor after releasing
+                canvas = getattr(self.window, "canvas", None)
+                if canvas is not None:
+                    canvas.setCursor(Qt.OpenHandCursor)
+            except Exception:
+                pass
+            # Still check for double right-click to exit pan mode
+            # Call parent's release to handle double-click detection
+            try:
+                return super().release(event)
+            except Exception:
+                return None
+        try:
+            return super().release(event)
+        except Exception:
+            return None
+    # --- end added pan utilities ---
+
+def webpage():
+    import webbrowser
+    webbrowser.open('https://ase-lib.org/ase/gui/gui.html')

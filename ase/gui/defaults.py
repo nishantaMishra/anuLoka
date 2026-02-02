@@ -24,6 +24,9 @@ gui_default_settings = {
     'show_bonds': False,
     'shift_cell': False,
     'swap_mouse': False,
+    'render_3d_atoms': True,
+    'default_color_scheme': 'Jmol',
+    'default_colormode': 'jmol',
 }
 
 

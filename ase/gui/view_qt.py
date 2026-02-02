@@ -1,0 +1,1024 @@
+# fmt: off
+
+"""
+Qt-based View module for ASE-GUI.
+
+This is a Qt (PyQt5) port of the original Tkinter-based view.py.
+"""
+
+from math import cos, sin, sqrt
+from os.path import basename
+
+import numpy as np
+import time
+
+from ase.calculators.calculator import PropertyNotImplementedError
+from ase.data import atomic_numbers
+from ase.data.colors import jmol_colors
+from ase.geometry import complete_cell
+from ase.gui.colors_qt import ColorWindow
+from ase.gui.i18n import ngettext
+from ase.gui.render_qt import Render
+from ase.gui.repeat_qt import Repeat
+from ase.gui.rotate_qt import Rotate
+from ase.gui.utils import get_magmoms
+from ase.utils import rotate
+
+GREEN = '#74DF00'
+PURPLE = '#AC58FA'
+BLACKISH = '#151515'
+
+# Gizmo visual tuning constants
+GIZMO_LENGTH = 32        # length of each axis handle in pixels
+GIZMO_PADDING = 22       # distance from left/bottom edges to gizmo origin
+GIZMO_HANDLE_R = 6       # radius of axis handle in pixels
+
+
+def get_cell_coordinates(cell, shifted=False):
+    """Get start and end points of lines segments used to draw cell."""
+    nn = []
+    for c in range(3):
+        v = cell[c]
+        d = sqrt(np.dot(v, v))
+        if d < 1e-12:
+            n = 0
+        else:
+            n = max(2, int(d / 0.3))
+        nn.append(n)
+    B1 = np.zeros((2, 2, sum(nn), 3))
+    B2 = np.zeros((2, 2, sum(nn), 3))
+    n1 = 0
+    for c, n in enumerate(nn):
+        n2 = n1 + n
+        h = 1.0 / (2 * n - 1)
+        R = np.arange(n) * (2 * h)
+
+        for i, j in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+            B1[i, j, n1:n2, c] = R
+            B1[i, j, n1:n2, (c + 1) % 3] = i
+            B1[i, j, n1:n2, (c + 2) % 3] = j
+        B2[:, :, n1:n2] = B1[:, :, n1:n2]
+        B2[:, :, n1:n2, c] += h
+        n1 = n2
+    B1.shape = (-1, 3)
+    B2.shape = (-1, 3)
+    if shifted:
+        B1 -= 0.5
+        B2 -= 0.5
+    return B1, B2
+
+
+def get_bonds(atoms, covalent_radii):
+    from ase.neighborlist import PrimitiveNeighborList
+
+    nl = PrimitiveNeighborList(
+        covalent_radii * 1.5,
+        skin=0.0,
+        self_interaction=False,
+        bothways=False,
+    )
+    nl.update(atoms.pbc, atoms.get_cell(complete=True), atoms.positions)
+    number_of_neighbors = sum(indices.size for indices in nl.neighbors)
+    number_of_pbc_neighbors = sum(
+        offsets.any(axis=1).sum() for offsets in nl.displacements
+    )  # sum up all neighbors that have non-zero supercell offsets
+    nbonds = number_of_neighbors + number_of_pbc_neighbors
+
+    bonds = np.empty((nbonds, 5), int)
+    if nbonds == 0:
+        return bonds
+
+    n1 = 0
+    for a in range(len(atoms)):
+        indices, offsets = nl.get_neighbors(a)
+        n2 = n1 + len(indices)
+        bonds[n1:n2, 0] = a
+        bonds[n1:n2, 1] = indices
+        bonds[n1:n2, 2:] = offsets
+        n1 = n2
+
+    i = bonds[:n2, 2:].any(1)
+    pbcbonds = bonds[:n2][i]
+    bonds[n2:, 0] = pbcbonds[:, 1]
+    bonds[n2:, 1] = pbcbonds[:, 0]
+    bonds[n2:, 2:] = -pbcbonds[:, 2:]
+    return bonds
+
+
+class View:
+    def __init__(self, rotations):
+        self.axes = rotate(rotations)
+        self.configured = False
+        self.frame = None
+
+        # Initialize colors with default scheme from config
+        default_scheme = self.config.get('default_color_scheme', 'Jmol')
+        default_mode = self.config.get('default_colormode', 'jmol')
+        
+        self.colormode = default_mode
+        self._color_scheme = default_scheme
+        
+        # Try to load color scheme from YAML, fallback to jmol_colors
+        self.colors = self._load_color_scheme(default_scheme)
+        
+        # scaling factors for vectors
+        self.force_vector_scale = self.config['force_vector_scale']
+        self.velocity_vector_scale = self.config['velocity_vector_scale']
+        self.magmom_vector_scale = self.config['magmom_vector_scale']
+
+        # buttons
+        self.b1 = 1  # left
+        self.b2 = 2  # middle
+        self.b3 = 3  # right
+        if self.config['swap_mouse']:
+            self.b1 = 3
+            self.b3 = 1
+        
+        # Mouse state tracking
+        self.button = None  # Currently pressed button
+        self.xy = (0, 0)  # Last mouse position
+        
+        # Track double right-click for pan mode toggle
+        self.last_right_click_time = 0
+        self.right_click_threshold = 300  # milliseconds for double-click
+
+    def _load_color_scheme(self, scheme_name):
+        """Load a color scheme from YAML file, fallback to jmol_colors."""
+        import os
+        import yaml
+        from ase.data import chemical_symbols
+        
+        yaml_path = os.path.join(os.path.dirname(__file__), '..', 'DOS', 'ElementColorSchemes.yaml')
+        
+        try:
+            if os.path.exists(yaml_path):
+                with open(yaml_path, 'r') as f:
+                    schemes = yaml.safe_load(f)
+                
+                if scheme_name in schemes:
+                    colors = {}
+                    for symbol, rgb in schemes[scheme_name].items():
+                        if symbol in chemical_symbols:
+                            Z = chemical_symbols.index(symbol)
+                            colors[Z] = '#{:02X}{:02X}{:02X}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                    return colors
+        except Exception:
+            pass
+        
+        # Fallback to jmol_colors
+        return {
+            i: ('#{:02X}{:02X}{:02X}'.format(*(int(x * 255) for x in rgb)))
+            for i, rgb in enumerate(jmol_colors)
+        }
+
+    @property
+    def atoms(self):
+        return self.images[self.frame]
+
+    def set_frame(self, frame=None, focus=False):
+        if frame is None:
+            frame = self.frame
+        assert frame < len(self.images), f"Frame {frame} >= len(images) {len(self.images)}"
+        self.frame = frame
+        self.set_atoms(self.images[frame])
+
+        fname = self.images.filenames[frame]
+        if fname is None:
+            header = 'ase.gui'
+        else:
+            # fname is actually not necessarily the filename but may
+            # contain indexing like filename@0
+            header = basename(fname)
+
+        images_loaded_text = ngettext(
+            'one image loaded',
+            '{} images loaded',
+            len(self.images)
+        ).format(len(self.images))
+
+        self.window.title = f'{header} — {images_loaded_text}'
+
+        if focus:
+            self.focus()
+        else:
+            self.draw()
+
+    def get_bonds(self, atoms):
+        # this method exists rather than just using the standalone function
+        # so that it can be overridden by external libraries
+        return get_bonds(atoms, self.get_covalent_radii(atoms))
+
+    def set_atoms(self, atoms):
+        natoms = len(atoms)
+
+        if self.showing_cell():
+            B1, B2 = get_cell_coordinates(atoms.cell,
+                                          self.config['shift_cell'])
+        else:
+            B1 = B2 = np.zeros((0, 3))
+
+        if self.showing_bonds():
+            atomscopy = atoms.copy()
+            atomscopy.cell *= self.images.repeat[:, np.newaxis]
+            bonds = self.get_bonds(atomscopy)
+        else:
+            bonds = np.empty((0, 5), int)
+
+        # X is all atomic coordinates, and starting points of vectors
+        # like bonds and cell segments.
+        # The reason to have them all in one big list is that we like to
+        # eventually rotate/sort it by Z-order when rendering.
+
+        # Also B are the end points of line segments.
+
+        self.X = np.empty((natoms + len(B1) + len(bonds), 3))
+        self.X_pos = self.X[:natoms]
+        self.X_pos[:] = atoms.positions
+        self.X_cell = self.X[natoms:natoms + len(B1)]
+        self.X_bonds = self.X[natoms + len(B1):]
+
+        cell = atoms.cell
+        ncellparts = len(B1)
+        nbonds = len(bonds)
+
+        self.X_cell[:] = np.dot(B1, cell)
+        self.B = np.empty((ncellparts + nbonds, 3))
+        self.B[:ncellparts] = np.dot(B2, cell)
+
+        if nbonds > 0:
+            P = atoms.positions
+            Af = self.images.repeat[:, np.newaxis] * cell
+            a = P[bonds[:, 0]]
+            b = P[bonds[:, 1]] + np.dot(bonds[:, 2:], Af) - a
+            d = (b**2).sum(1)**0.5
+            r = 0.65 * self.get_covalent_radii()
+            x0 = (r[bonds[:, 0]] / d).reshape((-1, 1))
+            x1 = (r[bonds[:, 1]] / d).reshape((-1, 1))
+            self.X_bonds[:] = a + b * x0
+            b *= 1.0 - x0 - x1
+            b[bonds[:, 2:].any(1)] *= 0.5
+            self.B[ncellparts:] = self.X_bonds + b
+
+        self.obs.set_atoms.notify()
+
+    def showing_bonds(self):
+        return self.window['toggle-show-bonds']
+
+    def showing_cell(self):
+        return self.window['toggle-show-unit-cell']
+
+    def toggle_show_unit_cell(self, key=None):
+        self.set_frame()
+
+    def toggle_3d_rendering(self, key=None):
+        """Toggle between 3D shaded and 2D flat atom rendering."""
+        self.draw()
+
+    def get_labels(self):
+        index = self.window['show-labels']
+        if index == 0:
+            return None
+
+        if index == 1:
+            return list(range(len(self.atoms)))
+
+        if index == 2:
+            return list(get_magmoms(self.atoms))
+
+        if index == 4:
+            Q = self.atoms.get_initial_charges()
+            return [f'{q:.4g}' for q in Q]
+
+        return self.atoms.symbols
+
+    def show_labels(self):
+        self.draw()
+
+    def toggle_show_axes(self, key=None):
+        self.draw()
+
+    def toggle_show_bonds(self, key=None):
+        self.set_frame()
+
+    def toggle_show_velocities(self, key=None):
+        self.draw()
+
+    def get_forces(self):
+        if self.atoms.calc is not None:
+            try:
+                return self.atoms.get_forces()
+            except PropertyNotImplementedError:
+                pass
+        return np.zeros((len(self.atoms), 3))
+
+    def toggle_show_forces(self, key=None):
+        self.draw()
+
+    def toggle_show_magmoms(self, key=None):
+        self.draw()
+
+    def hide_selected(self):
+        self.images.visible[self.images.selected] = False
+        self.draw()
+
+    def show_selected(self):
+        self.images.visible[self.images.selected] = True
+        self.draw()
+
+    def repeat_window(self, key=None):
+        return Repeat(self)
+
+    def rotate_window(self):
+        return Rotate(self)
+
+    def colors_window(self, key=None):
+        win = ColorWindow(self)
+        self.obs.new_atoms.register(win.notify_atoms_changed)
+        return win
+
+    # Helper: ask GUI (if present) to snapshot view changes
+    def _push_undo_for_view_change(self):
+        try:
+            if hasattr(self, '_is_restoring_state') and self._is_restoring_state:
+                return
+            if hasattr(self, '_push_undo'):
+                self._push_undo('view_change')
+        except Exception:
+            pass
+
+    def focus(self, x=None):
+        # record undo before changing scale/center
+        self._push_undo_for_view_change()
+        cell = (self.window['toggle-show-unit-cell'] and
+                self.images[0].cell.any())
+        if (len(self.atoms) == 0 and not cell):
+            self.scale = 20.0
+            self.center = np.zeros(3)
+            self.draw()
+            return
+
+        # Get the min and max point of the projected atom positions
+        # including the covalent_radii used for drawing the atoms
+        P = np.dot(self.X, self.axes)
+        n = len(self.atoms)
+        covalent_radii = self.get_covalent_radii()
+        P[:n] -= covalent_radii[:, None]
+        P1 = P.min(0)
+        P[:n] += 2 * covalent_radii[:, None]
+        P2 = P.max(0)
+        self.center = np.dot(self.axes, (P1 + P2) / 2)
+        self.center += self.atoms.get_celldisp().reshape((3,)) / 2
+        # Add 30% of whitespace on each side of the atoms
+        S = 1.3 * (P2 - P1)
+        w, h = self.window.size
+        if S[0] * h < S[1] * w:
+            self.scale = h / S[1]
+        elif S[0] > 0.0001:
+            self.scale = w / S[0]
+        else:
+            self.scale = 1.0
+        self.draw()
+
+    def reset_view(self, menuitem):
+        # record undo for view reset
+        self._push_undo_for_view_change()
+        self.axes = rotate('0.0x,0.0y,0.0z')
+        self.set_frame()
+        self.focus(self)
+
+    def set_view(self, key):
+        # record undo for view change
+        self._push_undo_for_view_change()
+        if key == 'Z':
+            self.axes = rotate('0.0x,0.0y,0.0z')
+        elif key == 'X':
+            self.axes = rotate('-90.0x,-90.0y,0.0z')
+        elif key == 'Y':
+            self.axes = rotate('90.0x,0.0y,90.0z')
+        elif key == 'Shift+Z':
+            self.axes = rotate('180.0x,0.0y,90.0z')
+        elif key == 'Shift+X':
+            self.axes = rotate('0.0x,90.0y,0.0z')
+        elif key == 'Shift+Y':
+            self.axes = rotate('-90.0x,0.0y,0.0z')
+        else:
+            if key == 'I':
+                i, j = 1, 2
+            elif key == 'J':
+                i, j = 2, 0
+            elif key == 'K':
+                i, j = 0, 1
+            elif key == 'Shift+I':
+                i, j = 2, 1
+            elif key == 'Shift+J':
+                i, j = 0, 2
+            elif key == 'Shift+K':
+                i, j = 1, 0
+
+            A = complete_cell(self.atoms.cell)
+            x1 = A[i]
+            x2 = A[j]
+
+            norm = np.linalg.norm
+
+            x1 = x1 / norm(x1)
+            x2 = x2 - x1 * np.dot(x1, x2)
+            x2 /= norm(x2)
+            x3 = np.cross(x1, x2)
+
+            self.axes = np.array([x1, x2, x3]).T
+
+        self.set_frame()
+
+    def get_colors(self, rgb=False):
+        if rgb:
+            return [tuple(int(_rgb[i:i + 2], 16) / 255 for i in range(1, 7, 2))
+                    for _rgb in self.get_colors()]
+
+        if self.colormode == 'jmol':
+            return [self.colors.get(Z, BLACKISH) for Z in self.atoms.numbers]
+
+        if self.colormode == 'neighbors':
+            return [self.colors.get(Z, BLACKISH)
+                    for Z in self.get_color_scalars()]
+
+        colorscale, cmin, cmax = self.colormode_data
+        N = len(colorscale)
+        colorswhite = colorscale + ['#ffffff']
+        if cmin == cmax:
+            indices = [N // 2] * len(self.atoms)
+        else:
+            scalars = np.ma.array(self.get_color_scalars())
+            indices = np.clip(((scalars - cmin) / (cmax - cmin) * N +
+                               0.5).astype(int),
+                              0, N - 1).filled(N)
+        return [colorswhite[i] for i in indices]
+
+    def get_color_scalars(self, frame=None):
+        if self.colormode == 'tag':
+            return self.atoms.get_tags()
+        if self.colormode == 'force':
+            f = (self.get_forces()**2).sum(1)**0.5
+            return f * self.images.get_dynamic(self.atoms)
+        elif self.colormode == 'velocity':
+            return (self.atoms.get_velocities()**2).sum(1)**0.5
+        elif self.colormode == 'initial charge':
+            return self.atoms.get_initial_charges()
+        elif self.colormode == 'magmom':
+            return get_magmoms(self.atoms)
+        elif self.colormode == 'neighbors':
+            from ase.neighborlist import NeighborList
+            n = len(self.atoms)
+            nl = NeighborList(self.get_covalent_radii(self.atoms) * 1.5,
+                              skin=0, self_interaction=False, bothways=True)
+            nl.update(self.atoms)
+            return [len(nl.get_neighbors(i)[0]) for i in range(n)]
+        else:
+            scalars = np.array(self.atoms.get_array(self.colormode),
+                               dtype=float)
+            return np.ma.array(scalars, mask=np.isnan(scalars))
+
+    def get_covalent_radii(self, atoms=None):
+        if atoms is None:
+            atoms = self.atoms
+        return self.images.get_radii(atoms)
+
+    def draw(self, status=True):
+        self.window.clear()
+        axes = self.scale * self.axes * (1, -1, 1)
+        offset = np.dot(self.center, axes)
+        offset[:2] -= 0.5 * self.window.size
+        X = np.dot(self.X, axes) - offset
+        n = len(self.atoms)
+
+        # The indices enumerate drawable objects in z order:
+        # Sort from far to near (ascending z) for back-to-front painter's algorithm
+        self.indices = X[:, 2].argsort()
+        
+        # Debug: print z-range to understand coordinate system
+        # print(f"Z range: {X[:n, 2].min():.1f} to {X[:n, 2].max():.1f}")
+        
+        r = self.get_covalent_radii() * self.scale
+        if self.window['toggle-show-bonds']:
+            r *= 0.65
+        P = self.P = X[:n, :2]
+        A = (P - r[:, None]).round().astype(int)
+        X1 = X[n:, :2].round().astype(int)
+        X2 = (np.dot(self.B, axes) - offset).round().astype(int)
+        disp = (np.dot(self.atoms.get_celldisp().reshape((3,)),
+                       axes)).round().astype(int)
+        d = (2 * r).round().astype(int)
+
+        vector_arrays = []
+        if self.window['toggle-show-velocities']:
+            # Scale ugly?
+            v = self.atoms.get_velocities()
+            if v is not None:
+                vector_arrays.append(v * 10.0 * self.velocity_vector_scale)
+        if self.window['toggle-show-forces']:
+            f = self.get_forces()
+            vector_arrays.append(f * self.force_vector_scale)
+
+        if self.window['toggle-show-magmoms']:
+            magmom = get_magmoms(self.atoms)
+            # Turn this into a 3D vector if it is a scalar
+            magmom_vecs = []
+            for i in range(len(magmom)):
+                if isinstance(magmom[i], (int, float)):
+                    magmom_vecs.append(np.array([0, 0, magmom[i]]))
+                elif isinstance(magmom[i], np.ndarray) and len(magmom[i]) == 3:
+                    magmom_vecs.append(magmom[i])
+                else:
+                    raise TypeError('Magmom is not a 3-component vector '
+                                'or a scalar')
+            magmom_vecs = np.array(magmom_vecs)
+            vector_arrays.append(magmom_vecs * 0.5 * self.magmom_vector_scale)
+
+        for array in vector_arrays:
+            array[:] = np.dot(array, axes) + X[:n]
+
+        colors = self.get_colors()
+        circle = self.window.circle
+        arc = self.window.arc
+        line = self.window.line
+        constrained = ~self.images.get_dynamic(self.atoms)
+
+        selected = self.images.selected
+        visible = self.images.visible
+        ncell = len(self.X_cell)
+        bond_linewidth = self.scale * 0.15
+
+        labels = self.get_labels()
+
+        if self.arrowkey_mode == self.ARROWKEY_MOVE:
+            movecolor = GREEN
+        elif self.arrowkey_mode == self.ARROWKEY_ROTATE:
+            movecolor = PURPLE
+
+        for a in self.indices:
+            if a < n:
+                ra = d[a]
+                if visible[a]:
+                    try:
+                        kinds = self.atoms.arrays['spacegroup_kinds']
+                        site_occ = self.atoms.info['occupancy'][str(kinds[a])]
+                        # first an empty circle if a site is not fully occupied
+                        if (np.sum([v for v in site_occ.values()])) < 1.0:
+                            fill = '#ffffff'
+                            circle(fill, selected[a],
+                                   A[a, 0], A[a, 1],
+                                   A[a, 0] + ra, A[a, 1] + ra)
+                        start = 0
+                        # start with the dominant species
+                        for sym, occ in sorted(site_occ.items(),
+                                               key=lambda x: x[1],
+                                               reverse=True):
+                            if np.round(occ, decimals=4) == 1.0:
+                                circle(colors[a], selected[a],
+                                       A[a, 0], A[a, 1],
+                                       A[a, 0] + ra, A[a, 1] + ra)
+                            else:
+                                # jmol colors for the moment
+                                extent = 360. * occ
+                                arc(self.colors[atomic_numbers[sym]],
+                                    selected[a],
+                                    start, extent,
+                                    A[a, 0], A[a, 1],
+                                    A[a, 0] + ra, A[a, 1] + ra)
+                                start += extent
+                    except KeyError:
+                        # legacy behavior
+                        # Draw the atoms
+                        if (self.moving and a < len(self.move_atoms_mask)
+                                and self.move_atoms_mask[a]):
+                            circle(movecolor, False,
+                                   A[a, 0] - 4, A[a, 1] - 4,
+                                   A[a, 0] + ra + 4, A[a, 1] + ra + 4)
+
+                        # Pass constrained flag so cross is clipped inside circle
+                        circle(colors[a], selected[a],
+                               A[a, 0], A[a, 1], A[a, 0] + ra, A[a, 1] + ra,
+                               constrained=constrained[a])
+
+                    # Draw labels on the atoms
+                    if labels is not None:
+                        self.window.text(A[a, 0] + ra / 2,
+                                         A[a, 1] + ra / 2,
+                                         str(labels[a]))
+
+                    # Draw velocities and/or forces
+                    for v in vector_arrays:
+                        assert not np.isnan(v).any()
+                        self.arrow((X[a, 0], X[a, 1], v[a, 0], v[a, 1]),
+                                   width=2)
+            else:
+                # Draw unit cell and/or bonds:
+                a -= n
+                if a < ncell:
+                    line((X1[a, 0] + disp[0], X1[a, 1] + disp[1],
+                          X2[a, 0] + disp[0], X2[a, 1] + disp[1]))
+                else:
+                    line((X1[a, 0], X1[a, 1],
+                          X2[a, 0], X2[a, 1]),
+                         width=bond_linewidth)
+
+        if self.window['toggle-show-axes']:
+            self.draw_axes()
+
+        if len(self.images) > 1:
+            self.draw_frame_number()
+
+        self.window.update()
+
+        if status:
+            self.status.status(self.atoms)
+
+        # Currently we change the atoms all over the place willy-nilly
+        # and then call draw().  For which reason we abuse draw() to notify
+        # the observers about general changes.
+        #
+        # We should refactor so change_atoms is only emitted
+        # when when atoms actually change, and maybe have a separate signal
+        # to listen to e.g. changes of view.
+        self.obs.change_atoms.notify()
+
+    def arrow(self, coords, width):
+        line = self.window.line
+        begin = np.array((coords[0], coords[1]))
+        end = np.array((coords[2], coords[3]))
+        line(coords, width)
+
+        vec = end - begin
+        length = np.sqrt((vec[:2]**2).sum())
+        length = min(length, 0.3 * self.scale)
+
+        angle = np.arctan2(end[1] - begin[1], end[0] - begin[0]) + np.pi
+        x1 = (end[0] + length * np.cos(angle - 0.3)).round().astype(int)
+        y1 = (end[1] + length * np.sin(angle - 0.3)).round().astype(int)
+        x2 = (end[0] + length * np.cos(angle + 0.3)).round().astype(int)
+        y2 = (end[1] + length * np.sin(angle + 0.3)).round().astype(int)
+        line((x1, y1, end[0], end[1]), width)
+        line((x2, y2, end[0], end[1]), width)
+
+    def draw_axes(self):
+        """Draw the small axis gizmo in the bottom-left and register
+        clickable handles for each axis.
+
+        We draw a line from the gizmo origin to the axis end and a small
+        circular handle at the end. The screen positions of the handles are
+        stored in self._gizmo_handles as tuples (x, y, label, i, zcomp)
+        so mouse events can hit-test them.
+        """
+
+        axes_length = GIZMO_LENGTH
+        rgb = ['#ff5252', '#4caf50', '#4d78ff']
+
+        # origin of the gizmo in screen coords
+        a = GIZMO_PADDING
+        b = self.window.size[1] - GIZMO_PADDING
+
+        # Prepare handle list for hit-testing in mouse events
+        self._gizmo_handles = []
+
+        for i in self.axes[:, 2].argsort():
+            c = int(self.axes[i][0] * axes_length + a)
+            d = int(-self.axes[i][1] * axes_length + b)
+
+            # line from origin to axis end (thin)
+            try:
+                self.window.line((a, b, c, d), width=1)
+            except TypeError:
+                self.window.line((a, b, c, d))
+
+            # draw small circular handle at the axis end
+            r = GIZMO_HANDLE_R
+            # fill the handle lightly if it points towards the viewer
+            zcomp = float(self.axes[i][2])
+            # highlight if hovered
+            hover_index = getattr(self, '_gizmo_hover', None)
+            is_hover = (hover_index == i)
+            if is_hover:
+                fill = '#ffd880'
+                outline = '#ff8800'
+            else:
+                if zcomp > 0:
+                    fill = '#dddddd'
+                else:
+                    fill = '#ffffff'
+                outline = None
+
+            # window.circle(fill, selected, x0, y0, x1, y1)
+            try:
+                # Some window backends expect boolean selected arg; pass False
+                self.window.circle(fill, False, c - r, d - r, c + r, d + r)
+            except TypeError:
+                # Fallback for backends with different signature
+                self.window.circle(fill, c - r, d - r, c + r, d + r)
+
+            # draw an outline for hover state if available
+            if is_hover:
+                try:
+                    self.window.line((c - r, d - r, c + r, d - r), width=1)
+                    self.window.line((c + r, d - r, c + r, d + r), width=1)
+                    self.window.line((c + r, d + r, c - r, d + r), width=1)
+                    self.window.line((c - r, d + r, c - r, d - r), width=1)
+                except Exception:
+                    pass
+
+            # axis label placed with extra offset to avoid overlap
+            self.window.text(c + r + 8, d - 2, 'XYZ'[i], color=rgb[i])
+
+            # store for hit-testing: (x, y, label, axis_index, z_component)
+            self._gizmo_handles.append((c, d, 'XYZ'[i], i, zcomp))
+
+    def draw_frame_number(self):
+        x, y = self.window.size
+        self.window.text(x, y, '{}'.format(self.frame),
+                         anchor='SE')
+
+    def release(self, event):
+        # Always reset button state on release
+        held_button = self.button
+        self.button = None
+        
+        if event.button in [4, 5]:
+            self.scroll_event(event)
+            return
+
+        # Handle double right-click to toggle pan mode
+        if event.button == self.b3:
+            # Check if this is a double-click (second click within threshold)
+            if event.time < self.last_right_click_time + self.right_click_threshold:
+                # Double right-click detected - toggle pan mode ON/OFF
+                # First double-click: enables panning (cursor becomes hand 🖐️)
+                # Second double-click: disables panning (cursor returns to normal 🖱️)
+                try:
+                    self.toggle_pan_mode()
+                except Exception:
+                    pass
+                self.last_right_click_time = 0  # Reset counter for next sequence
+                return
+            else:
+                # First click in new sequence - record timestamp for double-click detection
+                self.last_right_click_time = event.time
+            return
+
+        if event.button != self.b1:
+            return
+
+        # Check whether user clicked on the axis gizmo handles.
+        # If so, realign the view to that Cartesian axis and consume the
+        # event (do not perform atom selection). Animate the rotation.
+        if hasattr(self, '_gizmo_handles') and self._gizmo_handles:
+            # hit radius in pixels
+            hit_r = 10
+            ex = int(event.x)
+            ey = int(event.y)
+            for (hx, hy, label, axis_i, zcomp) in self._gizmo_handles:
+                dx = ex - int(hx)
+                dy = ey - int(hy)
+                if dx * dx + dy * dy <= hit_r * hit_r:
+                    # map z-component sign to positive/negative axis
+                    if zcomp > 0:
+                        key = label
+                    else:
+                        key = f'Shift+{label}'
+
+                    # compute target axes without changing state
+                    try:
+                        target_axes = self.axes_for_key(key)
+                    except Exception:
+                        # fallback: use set_view directly
+                        self._push_undo_for_view_change()
+                        self.set_view(key)
+                        return
+
+                    # animate to the new axes (set_frame called at animation end)
+                    self._push_undo_for_view_change()
+                    self.animate_to_axes(target_axes, steps=15, delay_ms=20)
+                    return
+
+        selected = self.images.selected
+        selected_ordered = self.images.selected_ordered
+
+        if event.time < self.t0 + 200:  # 200 ms
+            d = self.P - self.xy
+            r = self.get_covalent_radii()
+            hit = np.less((d**2).sum(1), (self.scale * r)**2)
+            for a in self.indices[::-1]:
+                if a < len(self.atoms) and hit[a]:
+                    if event.modifier == 'ctrl':
+                        selected[a] = not selected[a]
+                        if selected[a]:
+                            selected_ordered += [a]
+                        elif len(selected_ordered) > 0:
+                            if selected_ordered[-1] == a:
+                                selected_ordered = selected_ordered[:-1]
+                            else:
+                                selected_ordered = []
+                    else:
+                        selected[:] = False
+                        selected[a] = True
+                        selected_ordered = [a]
+                    break
+            else:
+                selected[:] = False
+                selected_ordered = []
+            self.draw()
+        else:
+            A = (event.x, event.y)
+            C1 = np.minimum(A, self.xy)
+            C2 = np.maximum(A, self.xy)
+            hit = np.logical_and(self.P > C1, self.P < C2)
+            indices = np.compress(hit.prod(1), np.arange(len(hit)))
+            if event.modifier != 'ctrl':
+                selected[:] = False
+            selected[indices] = True
+            if (len(indices) == 1 and
+                    indices[0] not in self.images.selected_ordered):
+                selected_ordered += [indices[0]]
+            elif len(indices) > 1:
+                selected_ordered = []
+            self.draw()
+
+        # XXX check bounds
+        natoms = len(self.atoms)
+        indices = np.arange(natoms)[self.images.selected[:natoms]]
+        if len(indices) != len(selected_ordered):
+            selected_ordered = []
+        self.images.selected_ordered = selected_ordered
+
+    def press(self, event):
+        self.button = event.button
+        self.xy = (event.x, event.y)
+        self.t0 = event.time
+        self.axes0 = self.axes
+        self.center0 = self.center
+
+    def move(self, event):
+        x = event.x
+        y = event.y
+        
+        # If no button is pressed, only handle hover effects
+        if getattr(self, 'button', None) is None:
+            if hasattr(self, '_gizmo_handles') and self._gizmo_handles:
+                ex = int(x)
+                ey = int(y)
+                hit_r = 10
+                hover = None
+                for (_hx, _hy, _label, axis_i, _z) in self._gizmo_handles:
+                    dx = ex - int(_hx)
+                    dy = ey - int(_hy)
+                    if dx * dx + dy * dy <= hit_r * hit_r:
+                        hover = axis_i
+                        break
+                if hover != getattr(self, '_gizmo_hover', None):
+                    self._gizmo_hover = hover
+                    # redraw to show hover highlight
+                    try:
+                        self.draw(status=False)
+                    except Exception:
+                        pass
+            return  # No button pressed, don't do drag operations
+        
+        x0, y0 = self.xy
+
+        if self.button == self.b1:
+            x0 = int(round(x0))
+            y0 = int(round(y0))
+            self.draw()
+            self.window.canvas.create_rectangle((x, y, x0, y0))
+            return
+
+        # Only rotate/pan if middle or right button is held (b2 or b3)
+        if self.button not in (self.b2, self.b3):
+            return
+
+        if event.modifier == 'shift':
+            # record undo before shifting center
+            self._push_undo_for_view_change()
+            self.center = (self.center0 -
+                           np.dot(self.axes, (x - x0, y0 - y, 0)) / self.scale)
+        else:
+            # record undo before rotating view
+            self._push_undo_for_view_change()
+            # Snap mode: the a-b angle and t should multipla of 15 degrees ???
+            a = x - x0
+            b = y0 - y
+            t = sqrt(a * a + b * b)
+            if t > 0:
+                a /= t
+                b /= t
+            else:
+                a = 1.0
+                b = 0.0
+            c = cos(0.01 * t)
+            s = -sin(0.01 * t)
+            rotation = np.array([(c * a * a + b * b, (c - 1) * b * a, s * a),
+                                 ((c - 1) * a * b, c * b * b + a * a, s * b),
+                                 (-s * a, -s * b, c)])
+            self.axes = np.dot(self.axes0, rotation)
+            if len(self.atoms) > 0:
+                com = self.X_pos.mean(0)
+            else:
+                com = self.atoms.cell.mean(0)
+            self.center = com - np.dot(com - self.center0,
+                                       np.dot(self.axes0, self.axes.T))
+        self.draw(status=False)
+
+    def render_window(self):
+        return Render(self)
+
+    def axes_for_key(self, key):
+        """Return an axes (3x3) matrix corresponding to the given key
+        without mutating viewer state. Mirrors the logic in set_view.
+        """
+        if key == 'Z':
+            return rotate('0.0x,0.0y,0.0z')
+        elif key == 'X':
+            return rotate('-90.0x,-90.0y,0.0z')
+        elif key == 'Y':
+            return rotate('90.0x,0.0y,90.0z')
+        elif key == 'Shift+Z':
+            return rotate('180.0x,0.0y,90.0z')
+        elif key == 'Shift+X':
+            return rotate('0.0x,90.0y,0.0z')
+        elif key == 'Shift+Y':
+            return rotate('-90.0x,0.0y,0.0z')
+        else:
+            # I/J/K mapping: compute from cell
+            if key == 'I':
+                i, j = 1, 2
+            elif key == 'J':
+                i, j = 2, 0
+            elif key == 'K':
+                i, j = 0, 1
+            elif key == 'Shift+I':
+                i, j = 2, 1
+            elif key == 'Shift+J':
+                i, j = 0, 2
+            elif key == 'Shift+K':
+                i, j = 1, 0
+            else:
+                raise ValueError('Unknown view key: %r' % (key,))
+
+            A = complete_cell(self.atoms.cell)
+            x1 = A[i]
+            x2 = A[j]
+
+            norm = np.linalg.norm
+
+            x1 = x1 / norm(x1)
+            x2 = x2 - x1 * np.dot(x1, x2)
+            x2 /= norm(x2)
+            x3 = np.cross(x1, x2)
+
+            return np.array([x1, x2, x3]).T
+
+    def animate_to_axes(self, target_axes, steps=10, delay_ms=20):
+        """Animate self.axes from current to target over `steps` frames.
+
+        A simple linear interpolation of matrix elements followed by
+        orthonormalization (SVD/polar) is used which provides a smooth
+        visual transition without adding heavy dependencies.
+        Uses QTimer for non-blocking animation.
+        """
+        from PyQt5.QtCore import QTimer
+        
+        start = np.array(self.axes)
+        target = np.array(target_axes)
+        self._anim_step = 0
+        self._anim_steps = steps
+        self._anim_start = start
+        self._anim_target = target
+        
+        def do_step():
+            self._anim_step += 1
+            t = self._anim_step / float(self._anim_steps)
+            M = (1 - t) * self._anim_start + t * self._anim_target
+            # orthonormalize via SVD (closest rotation)
+            U, _, Vt = np.linalg.svd(M)
+            R = np.dot(U, Vt)
+            self.axes = R
+            try:
+                self.draw(status=False)
+            except Exception:
+                pass
+            
+            if self._anim_step < self._anim_steps:
+                QTimer.singleShot(delay_ms, do_step)
+            else:
+                # Final cleanup
+                self.axes = self._anim_target
+                self.set_frame()
+        
+        # Start the animation
+        QTimer.singleShot(delay_ms, do_step)
+
+    def resize(self, event):
+        w, h = self.window.size
+        new_width = event.size().width()
+        new_height = event.size().height()
+        self.scale *= (new_width * new_height / (w * h))**0.5
+        self.window.size[:] = [new_width, new_height]
+        self.draw()
