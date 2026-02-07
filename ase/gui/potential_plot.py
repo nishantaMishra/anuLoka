@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 import subprocess
+import numpy as np
 from functools import partial
 
 import tkinter as tk
@@ -137,9 +138,8 @@ class PotentialPlotter:
         except Exception:
             pass
 
-        # Value is one of the labels; check for Planar-Average
-        if value == 'Planar-Average Potential':
-            # Show axis selection using pack()
+        show_axis = value in ('Planar-Average Potential', 'Macroscopic-Average Potential')
+        if show_axis:
             try:
                 if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
                     self.axis_label.widget.pack(side='left')
@@ -147,23 +147,8 @@ class PotentialPlotter:
                     self.axis_combo.widget.pack(side='left')
             except Exception:
                 pass
-            
-            # Add planar-specific checkboxes (default: unchecked)
-            try:
-                self.show_vac_check = ui.CheckButton(_('Show Vacuum level'), False, None)
-                self.show_fermi_check = ui.CheckButton(_('Show Fermi level'), False, None)
-                self.show_wf_check = ui.CheckButton(_('Show Work function'), False, None)
-                self.options_rows.add([self.show_vac_check, self.show_fermi_check, self.show_wf_check])
-                
-                # Add entry fields to display computed values
-                self.vac_value_entry = ui.Entry('', width=15)
-                self.fermi_value_entry = ui.Entry('', width=15)
-                self.wf_value_entry = ui.Entry('', width=15)
-                self.options_rows.add([self.vac_value_entry, self.fermi_value_entry, self.wf_value_entry])
-            except Exception:
-                pass
         else:
-            # Hide axis selection using pack_forget()
+            # Hide axis selection (not used for Linear-Average)
             try:
                 if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
                     self.axis_label.widget.pack_forget()
@@ -171,6 +156,26 @@ class PotentialPlotter:
                     self.axis_combo.widget.pack_forget()
             except Exception:
                 pass
+
+            try:
+                self.plane_label = ui.Label(_('Plane:'))
+                self.plane_combo = ui.ComboBox(['ab', 'ac', 'bc'], ['ab', 'ac', 'bc'], callback=None)
+                self.rep_label = ui.Label(_('Repeat (a b):'))
+                self.rep_a_entry = ui.Entry('1', width=4)
+                self.rep_b_entry = ui.Entry('1', width=4)
+                self.options_rows.add([self.plane_label, self.plane_combo, self.rep_label, self.rep_a_entry, self.rep_b_entry])
+            except Exception:
+                pass
+        elif value == 'Macroscopic-Average Potential':
+            try:
+                self.period_label = ui.Label(_('Period length (Å):'))
+                self.period_entry = ui.Entry('2.0', width=6)
+                self.iter_label = ui.Label(_('Iterations:'))
+                self.iter_entry = ui.Entry('2', width=4)
+                self.options_rows.add([self.period_label, self.period_entry, self.iter_label, self.iter_entry])
+            except Exception:
+                pass
+        else:
             # For now, show a short helper text for other types
             self.options_rows.add(_('Selected plot type will show its options here.'))
 
@@ -181,37 +186,34 @@ class PotentialPlotter:
 
         self.custom_rows.add('\nPlot Customization:')
 
-        # Title
-        default_title = ''
-        if self.default_location:
-            try:
-                last_dirs = os.path.normpath(self.default_location).split(os.sep)[-4:]
-                default_title = os.path.join(*last_dirs)
-            except Exception:
-                default_title = ''
-
-        self.show_title_check = ui.CheckButton(_('Title:'), True, None)
+        # Title (use compact checkbox + separate label to avoid large column gap)
+        self.show_title_check = ui.CheckButton('', True, None)
+        title_label = ui.Label(_('Title:'))
         self.title_entry = ui.Entry(default_title, width=35)
         self.title_fontsize = ui.SpinBox(14, 8, 30, 1, width=4)
-        self.custom_rows.add([self.show_title_check, self.title_entry, self.title_fontsize])
+        self.custom_rows.add([self.show_title_check, title_label, self.title_entry, self.title_fontsize])
 
         # X-axis
-        self.show_xlabel_check = ui.CheckButton(_('X-axis:'), True, None)
+        self.show_xlabel_check = ui.CheckButton('', True, None)
+        xlabel_label = ui.Label(_('X-axis:'))
         self.xlabel_entry = ui.Entry('Position (Å)', width=20)
         self.xlabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=3)
-        xlim_label = ui.Label('  xlim:')
+        xlim_label = ui.Label(_('  xlim:'))
         self.xlim_min = ui.SpinBox(0, -1000, 1000, 1, width=4)
         self.xlim_max = ui.SpinBox(0, -1000, 1000, 1, width=4)
-        self.custom_rows.add([self.show_xlabel_check, self.xlabel_entry, self.xlabel_fontsize, xlim_label, self.xlim_min, self.xlim_max])
+        self.custom_rows.add([self.show_xlabel_check, xlabel_label, self.xlabel_entry, self.xlabel_fontsize,
+                              xlim_label, self.xlim_min, self.xlim_max])
 
         # Y-axis
-        self.show_ylabel_check = ui.CheckButton(_('Y-axis:'), True, None)
+        self.show_ylabel_check = ui.CheckButton('', True, None)
+        ylabel_label = ui.Label(_('Y-axis:'))
         self.ylabel_entry = ui.Entry('Potential (eV)', width=20)
         self.ylabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=3)
-        ylim_label = ui.Label('  ylim:')
+        ylim_label = ui.Label(_('  ylim:'))
         self.ylim_min = ui.SpinBox(0, -1000, 1000, 1, width=4)
         self.ylim_max = ui.SpinBox(0, -1000, 1000, 1, width=4)
-        self.custom_rows.add([self.show_ylabel_check, self.ylabel_entry, self.ylabel_fontsize, ylim_label, self.ylim_min, self.ylim_max])
+        self.custom_rows.add([self.show_ylabel_check, ylabel_label, self.ylabel_entry, self.ylabel_fontsize,
+                              ylim_label, self.ylim_min, self.ylim_max])
 
         # Fill and grid options
         self.fill_check = ui.CheckButton(_('Fill under curve'), False, None)
@@ -442,7 +444,244 @@ class PotentialPlotter:
                 ui.showerror(_('Error'), _('Error plotting potential:\n') + str(e))
                 return
         else:
-            ui.showinfo(_('Info'), _('Plot type not implemented yet.'))
+            if plot_type == 'Linear-Average Potential':
+                try:
+                    plane = 'ab'
+                    if hasattr(self, 'plane_combo'):
+                        plane = self.plane_combo.value
+                    plane_map = {'ab': '1', 'ac': '2', 'bc': '3'}
+                    plane_input = plane_map.get(plane, '1')
+
+                    rep_a = 1
+                    rep_b = 1
+                    if hasattr(self, 'rep_a_entry'):
+                        try:
+                            rep_a = int(self.rep_a_entry.value)
+                        except Exception:
+                            rep_a = 1
+                    if hasattr(self, 'rep_b_entry'):
+                        try:
+                            rep_b = int(self.rep_b_entry.value)
+                        except Exception:
+                            rep_b = 1
+
+                    loc_dir = os.path.dirname(loc) or os.getcwd()
+                    cmd = f'(echo 42; sleep 0.5; echo 422; sleep 0.5; echo {plane_input}; sleep 0.5; echo "{rep_a} {rep_b}") | vaspkit'
+                    result = subprocess.run(cmd, shell=True, cwd=loc_dir, capture_output=True, text=True, timeout=60)
+                    if result.returncode != 0:
+                        ui.showerror(_('Error'), _('VASPKIT failed:\n') + (result.stderr or result.stdout))
+                        return
+
+                    x_path = os.path.join(loc_dir, 'X.grd')
+                    y_path = os.path.join(loc_dir, 'Y.grd')
+                    v_path = os.path.join(loc_dir, 'POTLAVG.grd')
+                    if not os.path.isfile(v_path):
+                        ui.showerror(_('Error'), _('POTLAVG.grd not found after running VASPKIT.'))
+                        return
+
+                    if os.path.isfile(x_path):
+                        x_data = np.loadtxt(x_path)
+                    elif os.path.isfile(y_path):
+                        x_data = np.loadtxt(y_path)
+                    else:
+                        ui.showerror(_('Error'), _('X.grd/Y.grd not found after running VASPKIT.'))
+                        return
+
+                    v_data = np.loadtxt(v_path)
+
+                    # Read customization options
+                    title = None
+                    xlabel = _('Position (Å)')
+                    ylabel = _('Line-averaged electrostatic potential (eV)')
+                    title_fs = 14
+                    xlabel_fs = 12
+                    ylabel_fs = 12
+                    show_grid = True
+                    fill = False
+                    xlim = None
+                    ylim = None
+
+                    if hasattr(self, 'show_title_check') and self.show_title_check.var.get():
+                        title = self.title_entry.value.strip()
+                    if hasattr(self, 'show_xlabel_check') and self.show_xlabel_check.var.get():
+                        xlabel = self.xlabel_entry.value.strip()
+                    else:
+                        axis_label = {'ab': 'c', 'ac': 'b', 'bc': 'a'}.get(plane, 'c')
+                        xlabel = _('Position along ') + axis_label + ' (Å)'
+                    if hasattr(self, 'show_ylabel_check') and self.show_ylabel_check.var.get():
+                        ylabel = self.ylabel_entry.value.strip()
+                    if hasattr(self, 'title_fontsize'):
+                        try:
+                            title_fs = self.title_fontsize.value
+                        except Exception:
+                            title_fs = title_fs
+                    if hasattr(self, 'xlabel_fontsize'):
+                        try:
+                            xlabel_fs = self.xlabel_fontsize.value
+                        except Exception:
+                            xlabel_fs = xlabel_fs
+                    if hasattr(self, 'ylabel_fontsize'):
+                        try:
+                            ylabel_fs = self.ylabel_fontsize.value
+                        except Exception:
+                            ylabel_fs = ylabel_fs
+                    if hasattr(self, 'grid_check'):
+                        show_grid = self.grid_check.var.get()
+                    if hasattr(self, 'fill_check'):
+                        fill = self.fill_check.var.get()
+                    if hasattr(self, 'xlim_min') and hasattr(self, 'xlim_max'):
+                        try:
+                            xmin = self.xlim_min.value
+                            xmax = self.xlim_max.value
+                            if xmin < xmax:
+                                xlim = (xmin, xmax)
+                        except Exception:
+                            xlim = None
+                    if hasattr(self, 'ylim_min') and hasattr(self, 'ylim_max'):
+                        try:
+                            ymin = self.ylim_min.value
+                            ymax = self.ylim_max.value
+                            if ymin < ymax:
+                                ylim = (ymin, ymax)
+                        except Exception:
+                            ylim = None
+
+                    plt.figure()
+                    if fill:
+                        plt.fill_between(x_data, v_data, alpha=0.3)
+                    plt.plot(x_data, v_data)
+                    if xlabel is not None:
+                        plt.xlabel(xlabel, fontsize=xlabel_fs)
+                    if ylabel is not None:
+                        plt.ylabel(ylabel, fontsize=ylabel_fs)
+                    if title is not None:
+                        plt.title(title, fontsize=title_fs)
+                    if show_grid:
+                        plt.grid(True, alpha=0.3)
+                    if xlim is not None:
+                        plt.xlim(xlim)
+                    if ylim is not None:
+                        plt.ylim(ylim)
+                    plt.tight_layout()
+                    plt.show()
+                except Exception as e:
+                    ui.showerror(_('Error'), _('Error plotting linear-average potential:\n') + str(e))
+                    return
+            elif plot_type == 'Macroscopic-Average Potential':
+                try:
+                    # axis_combo stores ['a','b','c']
+                    direction = self.axis_combo.value if hasattr(self, 'axis_combo') else 'c'
+                    axis_map = {'a': '1', 'b': '2', 'c': '3'}
+                    axis_input = axis_map.get(direction, '3')
+
+                    try:
+                        period = float(self.period_entry.value) if hasattr(self, 'period_entry') else 2.0
+                    except Exception:
+                        period = 2.0
+                    try:
+                        iterations = int(self.iter_entry.value) if hasattr(self, 'iter_entry') else 2
+                    except Exception:
+                        iterations = 2
+
+                    loc_dir = os.path.dirname(loc) or os.getcwd()
+                    cmd = f'(echo 42; sleep 0.5; echo 427; sleep 0.5; echo {axis_input}; sleep 0.5; echo {period}; sleep 0.5; echo {iterations}) | vaspkit'
+                    result = subprocess.run(cmd, shell=True, cwd=loc_dir, capture_output=True, text=True, timeout=60)
+                    if result.returncode != 0:
+                        ui.showerror(_('Error'), _('VASPKIT failed:\n') + (result.stderr or result.stdout))
+                        return
+
+                    data_path = os.path.join(loc_dir, 'MACROSCOPIC_AVERAGE.dat')
+                    if not os.path.isfile(data_path):
+                        ui.showerror(_('Error'), _('MACROSCOPIC_AVERAGE.dat not found after running VASPKIT.'))
+                        return
+
+                    data = np.loadtxt(data_path, comments='#')
+                    if data.ndim == 1:
+                        data = data.reshape(-1, data.shape[0])
+                    if data.shape[1] < 3:
+                        ui.showerror(_('Error'), _('MACROSCOPIC_AVERAGE.dat missing expected columns.'))
+                        return
+                    z = data[:, 0]
+                    v_macro = data[:, 1]
+                    v_planar = data[:, 2]
+
+                    # Customization options
+                    title = None
+                    xlabel = _('Position along ') + direction + ' (Å)'
+                    ylabel = _('Electrostatic potential (eV)')
+                    title_fs = 14
+                    xlabel_fs = 12
+                    ylabel_fs = 12
+                    show_grid = True
+                    fill = False
+                    xlim = None
+                    ylim = None
+
+                    if hasattr(self, 'show_title_check') and self.show_title_check.var.get():
+                        title = self.title_entry.value.strip()
+                    if hasattr(self, 'show_xlabel_check') and self.show_xlabel_check.var.get():
+                        xlabel = self.xlabel_entry.value.strip()
+                    if hasattr(self, 'show_ylabel_check') and self.show_ylabel_check.var.get():
+                        ylabel = self.ylabel_entry.value.strip()
+                    if hasattr(self, 'title_fontsize'):
+                        try:
+                            title_fs = self.title_fontsize.value
+                        except Exception:
+                            title_fs = title_fs
+                    if hasattr(self, 'xlabel_fontsize'):
+                        try:
+                            xlabel_fs = self.xlabel_fontsize.value
+                        except Exception:
+                            xlabel_fs = xlabel_fs
+                    if hasattr(self, 'ylabel_fontsize'):
+                        try:
+                            ylabel_fs = self.ylabel_fontsize.value
+                        except Exception:
+                            ylabel_fs = ylabel_fs
+                    if hasattr(self, 'grid_check'):
+                        show_grid = self.grid_check.var.get()
+                    if hasattr(self, 'fill_check'):
+                        fill = self.fill_check.var.get()
+                    if hasattr(self, 'xlim_min') and hasattr(self, 'xlim_max'):
+                        try:
+                            xmin = self.xlim_min.value
+                            xmax = self.xlim_max.value
+                            if xmin < xmax:
+                                xlim = (xmin, xmax)
+                        except Exception:
+                            xlim = None
+                    if hasattr(self, 'ylim_min') and hasattr(self, 'ylim_max'):
+                        try:
+                            ymin = self.ylim_min.value
+                            ymax = self.ylim_max.value
+                            if ymin < ymax:
+                                ylim = (ymin, ymax)
+                        except Exception:
+                            ylim = None
+
+                    plt.figure()
+                    if fill:
+                        plt.fill_between(z, v_macro, alpha=0.25, label=_('Macroscopic average (fill)'))
+                    plt.plot(z, v_macro, lw=2.0, label=_('Macroscopic average'))
+                    plt.plot(z, v_planar, lw=1.0, label=_('Planar average'))
+                    plt.xlabel(xlabel, fontsize=xlabel_fs)
+                    plt.ylabel(ylabel, fontsize=ylabel_fs)
+                    if title is not None:
+                        plt.title(title, fontsize=title_fs)
+                    if show_grid:
+                        plt.grid(True, alpha=0.3)
+                    if xlim is not None:
+                        plt.xlim(xlim)
+                    if ylim is not None:
+                        plt.ylim(ylim)
+                    plt.legend()
+                    plt.tight_layout()
+                    plt.show()
+                except Exception as e:
+                    ui.showerror(_('Error'), _('Error plotting macroscopic-average potential:\n') + str(e))
+                    return
+            else:
+                ui.showinfo(_('Info'), _('Plot type not implemented yet.'))
 
     def close(self):
         self.win.close()

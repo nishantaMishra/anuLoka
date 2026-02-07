@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 import subprocess
 from functools import partial
+import numpy as np
 
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -59,7 +60,7 @@ class PotentialPlotter:
 
         # LOCPOT file path (moved above Plot Type)
         self.win.add(_('LOCPOT file:'))
-        self.loc_entry = ui.Entry(os.path.join(self.default_location, 'LOCPOT'), width=50)
+        self.loc_entry = ui.Entry(os.path.join(self.default_location, 'LOCPOT'), width=35)
         self.win.add([self.loc_entry, ui.Button(_('Browse...'), self.browse_file)])
 
         # Plot type dropdown with space for axis (axis shown only for Planar-Average)
@@ -80,8 +81,9 @@ class PotentialPlotter:
         self.axis_label = ui.Label(_('  Axis:'))
         self.axis_combo = ui.ComboBox(['x', 'y', 'z'], ['a', 'b', 'c'], callback=None)
         
-        # Add Plot Type label and combo
-        self.win.add([ui.Label(_('Plot Type:')), self.type_combo, self.axis_label, self.axis_combo])
+        # Add Plot Type combo (label redundant; combo already indicates its purpose)
+        # Place combo at the left so it's the first control on the row
+        self.win.add([self.type_combo, self.axis_label, self.axis_combo])
 
         # Area where type-specific options are placed
         self.options_rows = ui.Rows()
@@ -115,6 +117,23 @@ class PotentialPlotter:
         self._cached_vacuum = None
         self._cached_work = None
         self._cached_fermi = None
+        # Cache for linear-average results
+        self._cached_lavg_loc = None
+        self._cached_lavg_plane = None
+        self._cached_lavg_rep_a = None
+        self._cached_lavg_rep_b = None
+        self._cached_lavg_x = None
+        self._cached_lavg_v = None
+        self._cached_lavg_meta = None
+        # Cache for macroscopic-average results
+        self._cached_macro_loc = None
+        self._cached_macro_axis = None
+        self._cached_macro_period = None
+        self._cached_macro_iter = None
+        self._cached_macro_z = None
+        self._cached_macro_vmacro = None
+        self._cached_macro_vplanar = None
+        self._cached_macro_meta = None
 
         # Buttons
         self.plot_button = ui.Button(_('Plot'), self.plot)
@@ -123,13 +142,24 @@ class PotentialPlotter:
         # Do not show customization until the user actively selects a plot type.
         # Show a prompt in the options area instead.
         self.options_rows.add(_('Please select a plot type to show options.'))
-        
-        # Initially hide axis widgets completely using pack_forget
+
+        # Initially hide axis widgets (only shown for planar/macro types)
+        self._set_axis_visible(False)
+
+    def _set_axis_visible(self, visible):
+        """Show/hide axis selection widgets regardless of layout manager."""
         try:
             if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
-                self.axis_label.widget.pack_forget()
+                self.axis_label.widget.setVisible(visible)
             if hasattr(self, 'axis_combo') and hasattr(self.axis_combo, 'widget'):
-                self.axis_combo.widget.pack_forget()
+                self.axis_combo.widget.setVisible(visible)
+        except Exception:
+            pass
+
+    def _compact_checkbox(self, checkbox):
+        try:
+            if hasattr(checkbox, 'widget') and checkbox.widget:
+                checkbox.widget.setFixedWidth(22)
         except Exception:
             pass
 
@@ -167,41 +197,68 @@ class PotentialPlotter:
         except Exception:
             pass
 
-        # Value is one of the labels; check for Planar-Average
+        show_axis = value in ('Planar-Average Potential', 'Macroscopic-Average Potential')
+        self._set_axis_visible(show_axis)
+
         if value == 'Planar-Average Potential':
-            # Show axis selection using pack()
             try:
-                if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
-                    self.axis_label.widget.pack(side='left')
-                if hasattr(self, 'axis_combo') and hasattr(self.axis_combo, 'widget'):
-                    self.axis_combo.widget.pack(side='left')
+                # Use compact checkbox + separate label so tooltip applies to the box only
+                self.show_vac_check = ui.CheckButton('', False, None)
+                self._compact_checkbox(self.show_vac_check)
+                vac_label = ui.Label(_('Vacuum level'))
+
+                self.show_fermi_check = ui.CheckButton('', False, None)
+                self._compact_checkbox(self.show_fermi_check)
+                fermi_label = ui.Label(_('Fermi level'))
+
+                self.show_wf_check = ui.CheckButton('', False, None)
+                self._compact_checkbox(self.show_wf_check)
+                wf_label = ui.Label(_('Work function'))
+
+                self.vac_value_entry = ui.Entry('  ', width=10)
+                self.fermi_value_entry = ui.Entry('', width=10)
+                self.wf_value_entry = ui.Entry('', width=10)
+
+                # Vertical stacks for each parameter
+                vac_col = ui.Rows([[self.show_vac_check, vac_label], [self.vac_value_entry]])
+                fermi_col = ui.Rows([[self.show_fermi_check, fermi_label], [self.fermi_value_entry]])
+                wf_col = ui.Rows([[self.show_wf_check, wf_label], [self.wf_value_entry]])
+
+                # Add the three columns side-by-side
+                self.options_rows.add([vac_col, fermi_col, wf_col])
+
+                # Tooltips for Planar-Average checkboxes (best-effort)
+                try:
+                    if hasattr(self, 'show_vac_check') and hasattr(self.show_vac_check, 'widget'):
+                        self.show_vac_check.widget.setToolTip(_('Show Vacuum level'))
+                    if hasattr(self, 'show_fermi_check') and hasattr(self.show_fermi_check, 'widget'):
+                        self.show_fermi_check.widget.setToolTip(_('Show Fermi level'))
+                    if hasattr(self, 'show_wf_check') and hasattr(self.show_wf_check, 'widget'):
+                        self.show_wf_check.widget.setToolTip(_('Show Work function'))
+                except Exception:
+                    pass
             except Exception:
                 pass
-            
-            # Add planar-specific checkboxes (default: unchecked)
+        elif value == 'Linear-Average Potential':
             try:
-                self.show_vac_check = ui.CheckButton(_('Show Vacuum level'), False, None)
-                self.show_fermi_check = ui.CheckButton(_('Show Fermi level'), False, None)
-                self.show_wf_check = ui.CheckButton(_('Show Work function'), False, None)
-                self.options_rows.add([self.show_vac_check, self.show_fermi_check, self.show_wf_check])
-                
-                # Add entry fields to display computed values
-                self.vac_value_entry = ui.Entry('', width=15)
-                self.fermi_value_entry = ui.Entry('', width=15)
-                self.wf_value_entry = ui.Entry('', width=15)
-                self.options_rows.add([self.vac_value_entry, self.fermi_value_entry, self.wf_value_entry])
+                self.plane_label = ui.Label(_('Plane:'))
+                self.plane_combo = ui.ComboBox(['ab', 'ac', 'bc'], ['ab', 'ac', 'bc'], callback=None)
+                self.rep_label = ui.Label(_('Repeat (a b):'))
+                self.rep_a_entry = ui.Entry('1', width=4)
+                self.rep_b_entry = ui.Entry('1', width=4)
+                self.options_rows.add([self.plane_label, self.plane_combo, self.rep_label, self.rep_a_entry, self.rep_b_entry])
+            except Exception:
+                pass
+        elif value == 'Macroscopic-Average Potential':
+            try:
+                self.period_label = ui.Label(_('Period length (Å):'))
+                self.period_entry = ui.Entry('2.0', width=6)
+                self.iter_label = ui.Label(_('Iterations:'))
+                self.iter_entry = ui.Entry('2', width=4)
+                self.options_rows.add([self.period_label, self.period_entry, self.iter_label, self.iter_entry])
             except Exception:
                 pass
         else:
-            # Hide axis selection using pack_forget()
-            try:
-                if hasattr(self, 'axis_label') and hasattr(self.axis_label, 'widget'):
-                    self.axis_label.widget.pack_forget()
-                if hasattr(self, 'axis_combo') and hasattr(self.axis_combo, 'widget'):
-                    self.axis_combo.widget.pack_forget()
-            except Exception:
-                pass
-            # For now, show a short helper text for other types
             self.options_rows.add(_('Selected plot type will show its options here.'))
 
     def _add_options_and_customization(self):
@@ -211,39 +268,47 @@ class PotentialPlotter:
 
         self.custom_rows.add('\nPlot Customization:')
 
-        # Title
         default_title = ''
-        if self.default_location:
+        if getattr(self, 'default_location', None):
             try:
                 last_dirs = os.path.normpath(self.default_location).split(os.sep)[-4:]
                 default_title = os.path.join(*last_dirs)
             except Exception:
                 default_title = ''
 
-        self.show_title_check = ui.CheckButton(_('Title:'), True, None)
-        self.title_entry = ui.Entry(default_title, width=35)
+        self.show_title_check = ui.CheckButton('', True, None)
+        self._compact_checkbox(self.show_title_check)
+        title_label = ui.Label(_('Title:'))
+        self.title_entry = ui.Entry(default_title, width=34)
         self.title_fontsize = ui.SpinBox(14, 8, 30, 1, width=4)
-        self.custom_rows.add([self.show_title_check, self.title_entry, self.title_fontsize])
+        self.custom_rows.add([self.show_title_check, title_label, self.title_entry, self.title_fontsize])
 
-        # X-axis
-        self.show_xlabel_check = ui.CheckButton(_('X-axis:'), True, None)
-        self.xlabel_entry = ui.Entry('Position (Å)', width=20)
+        self.show_xlabel_check = ui.CheckButton('', True, None)
+        self._compact_checkbox(self.show_xlabel_check)
+        xlabel_label = ui.Label(_('X-axis:'))
+        self.xlabel_entry = ui.Entry('Position (Å)', width=18)
         self.xlabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=3)
-        xlim_label = ui.Label('  xlim:')
+        xlim_label = ui.Label(_('xlim:'))
         self.xlim_min = ui.SpinBox(0, -1000, 1000, 1, width=4)
         self.xlim_max = ui.SpinBox(0, -1000, 1000, 1, width=4)
-        self.custom_rows.add([self.show_xlabel_check, self.xlabel_entry, self.xlabel_fontsize, xlim_label, self.xlim_min, self.xlim_max])
+        self.custom_rows.add([
+            self.show_xlabel_check, xlabel_label, self.xlabel_entry,
+            self.xlabel_fontsize, xlim_label, self.xlim_min, self.xlim_max
+        ])
 
-        # Y-axis
-        self.show_ylabel_check = ui.CheckButton(_('Y-axis:'), True, None)
-        self.ylabel_entry = ui.Entry('Potential (eV)', width=20)
+        self.show_ylabel_check = ui.CheckButton('', True, None)
+        self._compact_checkbox(self.show_ylabel_check)
+        ylabel_label = ui.Label(_('Y-axis:'))
+        self.ylabel_entry = ui.Entry('Potential (eV)', width=18)
         self.ylabel_fontsize = ui.SpinBox(12, 8, 24, 1, width=3)
-        ylim_label = ui.Label('  ylim:')
+        ylim_label = ui.Label(_('ylim:'))
         self.ylim_min = ui.SpinBox(0, -1000, 1000, 1, width=4)
         self.ylim_max = ui.SpinBox(0, -1000, 1000, 1, width=4)
-        self.custom_rows.add([self.show_ylabel_check, self.ylabel_entry, self.ylabel_fontsize, ylim_label, self.ylim_min, self.ylim_max])
+        self.custom_rows.add([
+            self.show_ylabel_check, ylabel_label, self.ylabel_entry,
+            self.ylabel_fontsize, ylim_label, self.ylim_min, self.ylim_max
+        ])
 
-        # Fill and grid options
         self.fill_check = ui.CheckButton(_('Fill under curve'), False, None)
         self.grid_check = ui.CheckButton(_('Show grid'), False, None)
         self.custom_rows.add([self.fill_check, self.grid_check])
@@ -252,6 +317,33 @@ class PotentialPlotter:
         try:
             if hasattr(self, 'title_fontsize') and hasattr(self.title_fontsize, 'widget'):
                 self.title_fontsize.widget.setToolTip('Font size')
+            # NEW: tooltips for x/y axis limits
+            if hasattr(self, 'xlim_min') and hasattr(self.xlim_min, 'widget'):
+                self.xlim_min.widget.setToolTip('X-axis minimum')
+            if hasattr(self, 'xlim_max') and hasattr(self.xlim_max, 'widget'):
+                self.xlim_max.widget.setToolTip('X-axis maximum')
+            if hasattr(self, 'ylim_min') and hasattr(self.ylim_min, 'widget'):
+                self.ylim_min.widget.setToolTip('Y-axis minimum')
+            if hasattr(self, 'ylim_max') and hasattr(self.ylim_max, 'widget'):
+                self.ylim_max.widget.setToolTip('Y-axis maximum')
+
+            # NEW: tooltips for Title / X-axis / Y-axis checkboxes
+            if hasattr(self, 'show_title_check') and hasattr(self.show_title_check, 'widget'):
+                try:
+                    self.show_title_check.widget.setToolTip(_('Show Plot Title'))
+                except Exception:
+                    pass
+            if hasattr(self, 'show_xlabel_check') and hasattr(self.show_xlabel_check, 'widget'):
+                try:
+                    self.show_xlabel_check.widget.setToolTip(_('Show X-axis title'))
+                except Exception:
+                    pass
+            if hasattr(self, 'show_ylabel_check') and hasattr(self.show_ylabel_check, 'widget'):
+                try:
+                    self.show_ylabel_check.widget.setToolTip(_('Show Y-axis title'))
+                except Exception:
+                    pass
+
         except Exception:
             pass
         # If live preview is enabled, (re)connect handlers for newly created widgets
@@ -335,6 +427,27 @@ class PotentialPlotter:
                 state.append(None)
             try:
                 state.append(self.axis_combo.value)
+            except Exception:
+                state.append(None)
+            try:
+                plane_val = getattr(getattr(self, 'plane_combo', None), 'value', None)
+                state.append(plane_val)
+            except Exception:
+                state.append(None)
+            for rep_attr in ('rep_a_entry', 'rep_b_entry'):
+                try:
+                    ent = getattr(self, rep_attr, None)
+                    state.append(ent.value if ent else None)
+                except Exception:
+                    state.append(None)
+            try:
+                period_val = getattr(getattr(self, 'period_entry', None), 'value', None)
+                state.append(period_val)
+            except Exception:
+                state.append(None)
+            try:
+                iter_val = getattr(getattr(self, 'iter_entry', None), 'value', None)
+                state.append(iter_val)
             except Exception:
                 state.append(None)
             # include checkboxes and key entries
@@ -459,7 +572,274 @@ class PotentialPlotter:
             self._locpot_worker.finished.connect(on_finished)
             self._locpot_worker.start()
             return
-            
+        elif plot_type == 'Linear-Average Potential':
+            try:
+                plane = 'ab'
+                if hasattr(self, 'plane_combo'):
+                    plane = self.plane_combo.value
+                plane_map = {'ab': '1', 'ac': '2', 'bc': '3'}
+                plane_input = plane_map.get(plane, '1')
+
+                try:
+                    rep_a = int(self.rep_a_entry.value) if hasattr(self, 'rep_a_entry') else 1
+                except Exception:
+                    rep_a = 1
+                try:
+                    rep_b = int(self.rep_b_entry.value) if hasattr(self, 'rep_b_entry') else 1
+                except Exception:
+                    rep_b = 1
+
+                loc_dir = os.path.dirname(loc) or os.getcwd()
+
+                class LinearAvgWorker(QThread):
+                    result = pyqtSignal(object, object, object)
+                    error = pyqtSignal(str)
+
+                    def __init__(self, path, plane_code, rep_a_val, rep_b_val, plane_label, cwd):
+                        super().__init__()
+                        self.path = path
+                        self.plane_code = plane_code
+                        self.rep_a_val = rep_a_val
+                        self.rep_b_val = rep_b_val
+                        self.plane_label = plane_label
+                        self.cwd = cwd
+
+                    def run(self):
+                        try:
+                            cmd = f'(echo 42; sleep 0.5; echo 422; sleep 0.5; echo {self.plane_code}; sleep 0.5; echo "{self.rep_a_val} {self.rep_b_val}") | vaspkit'
+                            result = subprocess.run(cmd, shell=True, cwd=self.cwd, capture_output=True, text=True, timeout=60)
+                            if result.returncode != 0:
+                                raise RuntimeError(result.stderr or result.stdout or 'VASPKIT failed')
+
+                            x_path = os.path.join(self.cwd, 'X.grd')
+                            y_path = os.path.join(self.cwd, 'Y.grd')
+                            v_path = os.path.join(self.cwd, 'POTLAVG.grd')
+                            if not os.path.isfile(v_path):
+                                raise RuntimeError('POTLAVG.grd not found after running VASPKIT')
+
+                            x_data = None
+                            if os.path.isfile(x_path):
+                                x_data = np.loadtxt(x_path)
+                            elif os.path.isfile(y_path):
+                                x_data = np.loadtxt(y_path)
+
+                            v_data = np.loadtxt(v_path)
+
+                            # Robustly handle 2-column outputs
+                            if v_data.ndim > 1:
+                                if x_data is None:
+                                    x_data = v_data[:, 0]
+                                v_data = v_data[:, -1]
+                            if x_data is None:
+                                raise RuntimeError('X.grd/Y.grd not found after running VASPKIT')
+                            if x_data.ndim > 1:
+                                x_data = x_data.ravel()
+                            if v_data.ndim > 1:
+                                v_data = v_data.ravel()
+                            if x_data.shape[0] != v_data.shape[0]:
+                                n = min(x_data.shape[0], v_data.shape[0])
+                                if n <= 0:
+                                    raise RuntimeError('Mismatch between X and POTLAVG grid lengths (empty arrays)')
+                                x_data = x_data[:n]
+                                v_data = v_data[:n]
+
+                            axis_label = {'ab': 'c', 'ac': 'b', 'bc': 'a'}.get(self.plane_label, 'c')
+                            meta = {'axis_label': f'Position along {axis_label} (Å)'}
+                            self.result.emit(x_data, v_data, meta)
+                        except Exception as e:
+                            self.error.emit(str(e))
+
+                try:
+                    if hasattr(self.plot_button, 'widget'):
+                        self.plot_button.widget.setEnabled(False)
+                except Exception:
+                    pass
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
+                self._lavg_worker = LinearAvgWorker(loc, plane_input, rep_a, rep_b, plane, loc_dir)
+
+                def on_lavg_error(msg):
+                    QApplication.restoreOverrideCursor()
+                    try:
+                        if hasattr(self.plot_button, 'widget'):
+                            self.plot_button.widget.setEnabled(True)
+                    except Exception:
+                        pass
+                    ui.showerror(_('Error'), _('Error reading linear-average potential:\n') + str(msg))
+
+                def on_lavg_result(x_data, v_data, meta):
+                    QApplication.restoreOverrideCursor()
+                    try:
+                        if hasattr(self.plot_button, 'widget'):
+                            self.plot_button.widget.setEnabled(True)
+                    except Exception:
+                        pass
+                    try:
+                        self._cached_lavg_loc = loc
+                        self._cached_lavg_plane = plane
+                        self._cached_lavg_rep_a = rep_a
+                        self._cached_lavg_rep_b = rep_b
+                        self._cached_lavg_x = x_data
+                        self._cached_lavg_v = v_data
+                        self._cached_lavg_meta = meta
+                    except Exception:
+                        pass
+                    try:
+                        self._plot_linear_avg(x_data, v_data, meta)
+                    except Exception as e:
+                        ui.showerror(_('Error'), _('Error plotting linear-average potential:\n') + str(e))
+
+                def on_lavg_finished():
+                    try:
+                        if hasattr(self.plot_button, 'widget'):
+                            self.plot_button.widget.setEnabled(True)
+                    except Exception:
+                        pass
+                    QApplication.restoreOverrideCursor()
+                    try:
+                        self._lavg_worker = None
+                    except Exception:
+                        pass
+
+                self._lavg_worker.error.connect(on_lavg_error)
+                self._lavg_worker.result.connect(on_lavg_result)
+                self._lavg_worker.finished.connect(on_lavg_finished)
+                self._lavg_worker.start()
+                return
+            except Exception as e:
+                try:
+                    QApplication.restoreOverrideCursor()
+                except Exception:
+                    pass
+                ui.showerror(_('Error'), _('Error launching linear-average calculation:\n') + str(e))
+                return
+        elif plot_type == 'Macroscopic-Average Potential':
+            try:
+                direction = self.axis_combo.value
+                axis_map = {'a': '1', 'b': '2', 'c': '3'}
+                axis_input = axis_map.get(direction, '3')
+            except Exception:
+                axis_input = '3'
+                direction = 'c'
+
+            try:
+                period = float(self.period_entry.value) if hasattr(self, 'period_entry') else 2.0
+            except Exception:
+                period = 2.0
+            try:
+                iterations = int(self.iter_entry.value) if hasattr(self, 'iter_entry') else 2
+            except Exception:
+                iterations = 2
+
+            loc_dir = os.path.dirname(loc) or os.getcwd()
+
+            class MacroAvgWorker(QThread):
+                result = pyqtSignal(object, object, object, object)
+                error = pyqtSignal(str)
+
+                def __init__(self, path, axis_code, period_val, iter_val, axis_label, cwd):
+                    super().__init__()
+                    self.path = path
+                    self.axis_code = axis_code
+                    self.period_val = period_val
+                    self.iter_val = iter_val
+                    self.axis_label = axis_label
+                    self.cwd = cwd
+
+                def run(self):
+                    try:
+                        cmd = f'(echo 42; sleep 0.5; echo 427; sleep 0.5; echo {self.axis_code}; sleep 0.5; echo {self.period_val}; sleep 0.5; echo {self.iter_val}) | vaspkit'
+                        result = subprocess.run(cmd, shell=True, cwd=self.cwd, capture_output=True, text=True, timeout=60)
+                        if result.returncode != 0:
+                            raise RuntimeError(result.stderr or result.stdout or 'VASPKIT failed')
+
+                        data_path = os.path.join(self.cwd, 'MACROSCOPIC_AVERAGE.dat')
+                        if not os.path.isfile(data_path):
+                            raise RuntimeError('MACROSCOPIC_AVERAGE.dat not found after running VASPKIT')
+
+                        data = np.loadtxt(data_path, comments='#')
+                        if data.ndim == 1:
+                            data = data.reshape(-1, data.shape[0])
+                        if data.shape[1] < 3:
+                            raise RuntimeError('MACROSCOPIC_AVERAGE.dat missing expected columns')
+                        z = data[:, 0]
+                        v_macro = data[:, 1]
+                        v_planar = data[:, 2]
+                        if z.ndim > 1:
+                            z = z.ravel()
+                        if v_macro.ndim > 1:
+                            v_macro = v_macro.ravel()
+                        if v_planar.ndim > 1:
+                            v_planar = v_planar.ravel()
+                        n = min(len(z), len(v_macro), len(v_planar))
+                        if n <= 0:
+                            raise RuntimeError('Empty MACROSCOPIC_AVERAGE.dat content')
+                        z = z[:n]
+                        v_macro = v_macro[:n]
+                        v_planar = v_planar[:n]
+                        meta = {'axis_label': f'Position along {self.axis_label} (Å)'}
+                        self.result.emit(z, v_macro, v_planar, meta)
+                    except Exception as e:
+                        self.error.emit(str(e))
+
+            try:
+                if hasattr(self.plot_button, 'widget'):
+                    self.plot_button.widget.setEnabled(False)
+            except Exception:
+                pass
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            self._macro_worker = MacroAvgWorker(loc, axis_input, period, iterations, direction, loc_dir)
+
+            def on_macro_error(msg):
+                QApplication.restoreOverrideCursor()
+                try:
+                    if hasattr(self.plot_button, 'widget'):
+                        self.plot_button.widget.setEnabled(True)
+                except Exception:
+                    pass
+                ui.showerror(_('Error'), _('Error reading macroscopic-average potential:\n') + str(msg))
+
+            def on_macro_result(z, v_macro, v_planar, meta):
+                QApplication.restoreOverrideCursor()
+                try:
+                    if hasattr(self.plot_button, 'widget'):
+                        self.plot_button.widget.setEnabled(True)
+                except Exception:
+                    pass
+                try:
+                    self._cached_macro_loc = loc
+                    self._cached_macro_axis = direction
+                    self._cached_macro_period = period
+                    self._cached_macro_iter = iterations
+                    self._cached_macro_z = z
+                    self._cached_macro_vmacro = v_macro
+                    self._cached_macro_vplanar = v_planar
+                    self._cached_macro_meta = meta
+                except Exception:
+                    pass
+                try:
+                    self._plot_macro_avg(z, v_macro, v_planar, meta)
+                except Exception as e:
+                    ui.showerror(_('Error'), _('Error plotting macroscopic-average potential:\n') + str(e))
+
+            def on_macro_finished():
+                try:
+                    if hasattr(self.plot_button, 'widget'):
+                        self.plot_button.widget.setEnabled(True)
+                except Exception:
+                    pass
+                QApplication.restoreOverrideCursor()
+                try:
+                    self._macro_worker = None
+                except Exception:
+                    pass
+
+            self._macro_worker.error.connect(on_macro_error)
+            self._macro_worker.result.connect(on_macro_result)
+            self._macro_worker.finished.connect(on_macro_finished)
+            self._macro_worker.start()
+            return
         else:
             ui.showinfo(_('Info'), _('Plot type not implemented yet.'))
 
@@ -517,30 +897,83 @@ class PotentialPlotter:
 
         # Skip if worker running
         worker = getattr(self, '_locpot_worker', None)
-        if worker is not None and worker.isRunning():
+        lavg_worker = getattr(self, '_lavg_worker', None)
+        macro_worker = getattr(self, '_macro_worker', None)
+        if (worker is not None and worker.isRunning()) or (lavg_worker is not None and lavg_worker.isRunning()) or (macro_worker is not None and macro_worker.isRunning()):
             return
 
-        # Only auto-plot Planar-Average
         try:
-            if self.type_combo.value != 'Planar-Average Potential':
-                return
+            plot_type = self.type_combo.value
         except Exception:
             return
 
-        cur_loc = self.loc_entry.value.strip()
-        cur_dir = self.axis_combo.value
-        if (self._cached_loc == cur_loc and self._cached_direction == cur_dir
-                and self._cached_z is not None):
+        if plot_type == 'Planar-Average Potential':
+            cur_loc = self.loc_entry.value.strip()
+            cur_dir = self.axis_combo.value
+            if (self._cached_loc == cur_loc and self._cached_direction == cur_dir
+                    and self._cached_z is not None):
+                try:
+                    self._plot_planar_avg(self._cached_z, self._cached_vz, self._cached_meta, auto_refresh=True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.plot()
+                except Exception:
+                    pass
+        elif plot_type == 'Linear-Average Potential':
+            cur_loc = self.loc_entry.value.strip()
+            cur_plane = getattr(self, 'plane_combo', None).value if hasattr(self, 'plane_combo') else 'ab'
             try:
-                self._plot_planar_avg(self._cached_z, self._cached_vz, self._cached_meta, auto_refresh=True)
+                cur_rep_a = int(getattr(self, 'rep_a_entry', None).value) if hasattr(self, 'rep_a_entry') else 1
             except Exception:
-                pass
+                cur_rep_a = 1
+            try:
+                cur_rep_b = int(getattr(self, 'rep_b_entry', None).value) if hasattr(self, 'rep_b_entry') else 1
+            except Exception:
+                cur_rep_b = 1
+
+            if (self._cached_lavg_loc == cur_loc and self._cached_lavg_plane == cur_plane
+                    and self._cached_lavg_rep_a == cur_rep_a and self._cached_lavg_rep_b == cur_rep_b
+                    and self._cached_lavg_x is not None):
+                try:
+                    self._plot_linear_avg(self._cached_lavg_x, self._cached_lavg_v, self._cached_lavg_meta, auto_refresh=True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.plot()
+                except Exception:
+                    pass
+        elif plot_type == 'Macroscopic-Average Potential':
+            cur_loc = self.loc_entry.value.strip()
+            try:
+                cur_axis = self.axis_combo.value
+            except Exception:
+                cur_axis = 'c'
+            try:
+                cur_period = float(getattr(self, 'period_entry', None).value) if hasattr(self, 'period_entry') else 2.0
+            except Exception:
+                cur_period = 2.0
+            try:
+                cur_iter = int(getattr(self, 'iter_entry', None).value) if hasattr(self, 'iter_entry') else 2
+            except Exception:
+                cur_iter = 2
+
+            if (self._cached_macro_loc == cur_loc and self._cached_macro_axis == cur_axis
+                    and self._cached_macro_period == cur_period and self._cached_macro_iter == cur_iter
+                    and self._cached_macro_z is not None):
+                try:
+                    self._plot_macro_avg(self._cached_macro_z, self._cached_macro_vmacro, self._cached_macro_vplanar, self._cached_macro_meta, auto_refresh=True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.plot()
+                except Exception:
+                    pass
         else:
-            # No cached data; trigger a load+plot
-            try:
-                self.plot()
-            except Exception:
-                pass
+            return
 
     def _connect_auto_preview_handlers(self):
         """Connect widget signals to _on_setting_changed for event-driven updates."""
@@ -563,6 +996,13 @@ class PotentialPlotter:
                     except Exception:
                         pass
 
+            def connect_combo(combo):
+                if hasattr(combo, 'widget') and combo.widget:
+                    try:
+                        combo.widget.currentIndexChanged.connect(self._on_setting_changed)
+                    except Exception:
+                        pass
+
             # Helper: connect entry (use textEdited for debounced text changes)
             def connect_entry(ent):
                 if hasattr(ent, 'widget') and ent.widget:
@@ -578,6 +1018,10 @@ class PotentialPlotter:
             except Exception:
                 pass
             try:
+                connect_combo(self.axis_combo)
+            except Exception:
+                pass
+            try:
                 connect_entry(self.title_entry)
             except Exception:
                 pass
@@ -587,6 +1031,15 @@ class PotentialPlotter:
                 pass
             try:
                 connect_entry(self.ylabel_entry)
+            except Exception:
+                pass
+            for ent_name in ('rep_a_entry', 'rep_b_entry', 'period_entry', 'iter_entry'):
+                try:
+                    connect_entry(getattr(self, ent_name))
+                except Exception:
+                    pass
+            try:
+                connect_combo(self.plane_combo)
             except Exception:
                 pass
             for sp in ('title_fontsize', 'xlabel_fontsize', 'ylabel_fontsize', 'xlim_min', 'xlim_max', 'ylim_min', 'ylim_max'):
@@ -631,6 +1084,20 @@ class PotentialPlotter:
                 disconnect_if_possible(self.ylabel_entry.widget.textEdited, self._on_text_changed)
             except Exception:
                 pass
+            try:
+                disconnect_if_possible(self.axis_combo.widget.currentIndexChanged, self._on_setting_changed)
+            except Exception:
+                pass
+            try:
+                disconnect_if_possible(self.plane_combo.widget.currentIndexChanged, self._on_setting_changed)
+            except Exception:
+                pass
+            for ent_name in ('rep_a_entry', 'rep_b_entry', 'period_entry', 'iter_entry'):
+                try:
+                    ent = getattr(self, ent_name)
+                    disconnect_if_possible(ent.widget.textEdited, self._on_text_changed)
+                except Exception:
+                    pass
             for sp in ('title_fontsize', 'xlabel_fontsize', 'ylabel_fontsize', 'xlim_min', 'xlim_max', 'ylim_min', 'ylim_max'):
                 try:
                     disconnect_if_possible(getattr(self, sp).widget.valueChanged, self._on_setting_changed)
@@ -989,6 +1456,167 @@ class PotentialPlotter:
                 if fill:
                     plt.fill_between(z_plot, vz_plot, alpha=0.3)
                 plt.plot(z_plot, vz_plot)
+                plt.show()
+
+    def _plot_linear_avg(self, x_data, v_data, meta, auto_refresh=False):
+        """Plot linear-average potential data."""
+        title = self.title_entry.value.strip() if hasattr(self, 'show_title_check') and self.show_title_check.var.get() else None
+        xlabel = meta.get('axis_label', _('Position (Å)')) if isinstance(meta, dict) else _('Position (Å)')
+        ylabel = self.ylabel_entry.value.strip() if hasattr(self, 'show_ylabel_check') and self.show_ylabel_check.var.get() else _('Linear-averaged electrostatic potential (eV)')
+        if hasattr(self, 'show_xlabel_check') and self.show_xlabel_check.var.get() and hasattr(self, 'xlabel_entry'):
+            try:
+                xlabel = self.xlabel_entry.value.strip()
+            except Exception:
+                pass
+        title_fs = getattr(self, 'title_fontsize', None).value if hasattr(self, 'title_fontsize') else 14
+        xlabel_fs = getattr(self, 'xlabel_fontsize', None).value if hasattr(self, 'xlabel_fontsize') else 12
+        ylabel_fs = getattr(self, 'ylabel_fontsize', None).value if hasattr(self, 'ylabel_fontsize') else 12
+        show_grid = getattr(self, 'grid_check', None).var.get() if hasattr(self, 'grid_check') else True
+
+        # Downsample for interactive plotting
+        try:
+            max_points = 5000
+            n = len(x_data)
+            step = max(1, n // max_points)
+            x_plot = x_data[::step]
+            v_plot = v_data[::step]
+        except Exception:
+            x_plot = x_data
+            v_plot = v_data
+
+        try:
+            if self.plot_figure is None or not plt.fignum_exists(self.plot_figure.number):
+                fig, ax = plt.subplots()
+                self.plot_figure = fig
+                self.plot_axes = ax
+            else:
+                fig = self.plot_figure
+                ax = self.plot_axes
+                ax.clear()
+
+            ax.plot(x_plot, v_plot, label=_('Linear average'))
+            ax.set_xlabel(xlabel, fontsize=xlabel_fs)
+            ax.set_ylabel(ylabel, fontsize=ylabel_fs)
+            if title:
+                ax.set_title(title, fontsize=title_fs)
+            if show_grid:
+                ax.grid(True)
+            # Optional limits
+            try:
+                if hasattr(self, 'xlim_min') and hasattr(self, 'xlim_max'):
+                    xmin = self.xlim_min.value
+                    xmax = self.xlim_max.value
+                    if xmin < xmax:
+                        ax.set_xlim(xmin, xmax)
+                if hasattr(self, 'ylim_min') and hasattr(self, 'ylim_max'):
+                    ymin = self.ylim_min.value
+                    ymax = self.ylim_max.value
+                    if ymin < ymax:
+                        ax.set_ylim(ymin, ymax)
+            except Exception:
+                pass
+            ax.legend()
+
+            try:
+                if auto_refresh:
+                    fig.canvas.draw_idle()
+                else:
+                    fig.canvas.draw_idle()
+                    fig.show()
+                    plt.pause(0.001)
+            except Exception:
+                if not auto_refresh:
+                    plt.show()
+        except Exception:
+            if not auto_refresh:
+                plt.figure()
+                plt.plot(x_plot, v_plot)
+                plt.xlabel(xlabel)
+                plt.ylabel(ylabel)
+                if title:
+                    plt.title(title)
+                plt.show()
+
+    def _plot_macro_avg(self, z, v_macro, v_planar, meta, auto_refresh=False):
+        """Plot macroscopic and planar averages together."""
+        title = self.title_entry.value.strip() if hasattr(self, 'show_title_check') and self.show_title_check.var.get() else None
+        xlabel = meta.get('axis_label', _('Position (Å)')) if isinstance(meta, dict) else _('Position (Å)')
+        ylabel = self.ylabel_entry.value.strip() if hasattr(self, 'show_ylabel_check') and self.show_ylabel_check.var.get() else _('Potential (eV)')
+        if hasattr(self, 'show_xlabel_check') and self.show_xlabel_check.var.get() and hasattr(self, 'xlabel_entry'):
+            try:
+                xlabel = self.xlabel_entry.value.strip()
+            except Exception:
+                pass
+        title_fs = getattr(self, 'title_fontsize', None).value if hasattr(self, 'title_fontsize') else 14
+        xlabel_fs = getattr(self, 'xlabel_fontsize', None).value if hasattr(self, 'xlabel_fontsize') else 12
+        ylabel_fs = getattr(self, 'ylabel_fontsize', None).value if hasattr(self, 'ylabel_fontsize') else 12
+        show_grid = getattr(self, 'grid_check', None).var.get() if hasattr(self, 'grid_check') else True
+
+        try:
+            max_points = 5000
+            n = len(z)
+            step = max(1, n // max_points)
+            z_plot = z[::step]
+            v_macro_plot = v_macro[::step]
+            v_planar_plot = v_planar[::step]
+        except Exception:
+            z_plot = z
+            v_macro_plot = v_macro
+            v_planar_plot = v_planar
+
+        try:
+            if self.plot_figure is None or not plt.fignum_exists(self.plot_figure.number):
+                fig, ax = plt.subplots()
+                self.plot_figure = fig
+                self.plot_axes = ax
+            else:
+                fig = self.plot_figure
+                ax = self.plot_axes
+                ax.clear()
+
+            ax.plot(z_plot, v_planar_plot, label=_('Planar average'), linestyle='--')
+            ax.plot(z_plot, v_macro_plot, label=_('Macroscopic average'))
+            ax.set_xlabel(xlabel, fontsize=xlabel_fs)
+            ax.set_ylabel(ylabel, fontsize=ylabel_fs)
+            if title:
+                ax.set_title(title, fontsize=title_fs)
+            if show_grid:
+                ax.grid(True)
+            try:
+                if hasattr(self, 'xlim_min') and hasattr(self, 'xlim_max'):
+                    xmin = self.xlim_min.value
+                    xmax = self.xlim_max.value
+                    if xmin < xmax:
+                        ax.set_xlim(xmin, xmax)
+                if hasattr(self, 'ylim_min') and hasattr(self, 'ylim_max'):
+                    ymin = self.ylim_min.value
+                    ymax = self.ylim_max.value
+                    if ymin < ymax:
+                        ax.set_ylim(ymin, ymax)
+            except Exception:
+                pass
+            ax.legend()
+
+            try:
+                if auto_refresh:
+                    fig.canvas.draw_idle()
+                else:
+                    fig.canvas.draw_idle()
+                    fig.show()
+                    plt.pause(0.001)
+            except Exception:
+                if not auto_refresh:
+                    plt.show()
+        except Exception:
+            if not auto_refresh:
+                plt.figure()
+                plt.plot(z_plot, v_macro_plot, label=_('Macroscopic average'))
+                plt.plot(z_plot, v_planar_plot, label=_('Planar average'), linestyle='--')
+                plt.xlabel(xlabel)
+                plt.ylabel(ylabel)
+                if title:
+                    plt.title(title)
+                plt.legend()
                 plt.show()
 
 

@@ -17,6 +17,16 @@ import ase.gui.ui_qt as ui
 from ase.gui.i18n import _
 
 
+class CompactRows(ui.Rows):
+    """Rows container that packs items tightly to the top."""
+    def create(self, parent):
+        widget = super().create(parent)
+        # Add stretch at the end to push items to the top
+        if self._layout:
+            self._layout.addStretch()
+        return widget
+
+
 class OrbitalContextMenu:
     """Context menu for selecting individual orbital components (p or d)."""
     
@@ -70,6 +80,19 @@ class DOSPlotter:
         self.gui = gui
         self.win = ui.Window(_('Plot DOS'))
         
+        # Override closeEvent to log all window closures
+        original_close_event = self.win.win.closeEvent
+        def logged_close_event(event):
+            import traceback
+            print("\n" + "="*60)
+            print("Qt closeEvent triggered (X button, Escape, or system close)")
+            print("Stack trace:")
+            traceback.print_stack()
+            print("="*60 + "\n")
+            if original_close_event:
+                original_close_event(event)
+        self.win.win.closeEvent = logged_close_event
+        
         # Initialize checkbox states early
         self.element_checks = {}
         self.orbital_checks = {}
@@ -99,7 +122,7 @@ class DOSPlotter:
         
         # Directory selection
         self.win.add(_('DOS Data Directory:'))
-        self.location = ui.Entry(self.default_location, width=50)
+        self.location = ui.Entry(self.default_location, width=35)
         self.win.add([self.location, ui.Button(_('Browse...'), self.browse_directory)])
         
         if self.pdos_files:
@@ -119,6 +142,14 @@ class DOSPlotter:
                      ui.Button(_('Plot'), self.plot),
                      ui.Button(_('Refresh'), self.refresh),
                      ui.Button(_('Close'), self.close)])
+        
+        print("DOSPlotter.__init__() completed successfully")
+    
+    def __del__(self):
+        """Destructor - called when object is garbage collected."""
+        print("\n" + "="*60)
+        print("DOSPlotter.__del__() called - object being destroyed")
+        print("="*60 + "\n")
     
     def _get_default_location(self):
         """Get default directory for DOS files."""
@@ -232,10 +263,11 @@ class DOSPlotter:
         # Store all checkboxes/widgets for connecting auto-refresh
         self._auto_refresh_widgets = []
         
-        # --- PDOS Section ---
+        # --- PDOS and Markers Side-by-Side ---
+        pdos_rows = []
         pdos_label = ui.Label(_('Partial DOS:'))
         hint_label = ui.Label(_('(Right-click p/d for orbitals)'))
-        self.win.add([pdos_label, hint_label])
+        pdos_rows.append([pdos_label, hint_label])
         
         # Create element rows compactly
         for element in self.available_elements:
@@ -268,45 +300,51 @@ class DOSPlotter:
             
             # Build compact row: [element checkbox] [s] [p] [d]
             row_widgets = [elem_check] + orbital_checks
-            self.win.add(row_widgets)
+            pdos_rows.append(row_widgets)
+
+        pdos_col = CompactRows(pdos_rows)
         
-        # --- Vertical Markers Section ---
-        self.win.add(_('Vertical Markers:'))
+        # --- Vertical Markers Section (Right Column) ---
+        markers_rows = []
+        markers_rows.append([ui.Label(' ')])  # Spacer
+        markers_rows.append([ui.Label(_('Vertical Markers:'))])
         
         self.fermi_marker_check = ui.CheckButton(_('Fermi level (E=0)'), True)
-        self.win.add(self.fermi_marker_check)
+        markers_rows.append([self.fermi_marker_check])
         
         self.dband_marker_check = ui.CheckButton(_('d-band center'))
-        self.win.add(self.dband_marker_check)
+        markers_rows.append([self.dband_marker_check])
         
-        self.custom_marker_check = ui.CheckButton(_('Custom:'))
+        # Empty label for check button since "Custom" is already in the entry
+        self.custom_marker_check = ui.CheckButton('')
         self.custom_marker_label_entry = ui.Entry('Custom', width=12)
-        self.custom_marker_value_entry = ui.SpinBox(0.0, -100, 100, 0.5, width=6)
-        self.win.add([self.custom_marker_check, self.custom_marker_label_entry, 
+        self.custom_marker_value_entry = ui.SpinBox(0.0, -100, 100, 0.5, width=4)
+        markers_rows.append([self.custom_marker_check, self.custom_marker_label_entry, 
                       self.custom_marker_value_entry, ui.Label(_('eV'))])
         
-        # Attach context menus after window is shown
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(100, self._attach_all_context_menus)
-        
-        # --- Options Section ---
-        self.win.add(_('Options:'))
-        
-        # Spin filter - compact row
+        # --- Options under Vertical Markers ---
+        markers_rows.append([ui.Label(' ')])
+        markers_rows.append([ui.Label(_('Options:'))])
+
+        # Spin filter
         self.spin_var = ui.RadioButtons(['Both', 'Up', 'Down'], 
                                         ['both', 'up', 'down'], 
                                         self._on_setting_changed)
         self.spin_var.value = 'both'
-        self.win.add([ui.Label(_('Spin:')), self.spin_var])
+        markers_rows.append([ui.Label(_('Spin:')), self.spin_var])
+
+        # Cutoff
+        self.cutoff_entry = ui.SpinBox(0.0, 0.0, 10000.0, 0.1, width=6)
+        markers_rows.append([ui.Label(_('DOS Cutoff:')), self.cutoff_entry])
         
-        # Fill and grid options on same row
-        self.fill_check = ui.CheckButton(_('Fill under curves'))
-        self.grid_check = ui.CheckButton(_('Show grid'))
-        self.win.add([self.fill_check, self.grid_check])
+        markers_col = CompactRows(markers_rows)
+
+        # Add columns side-by-side
+        self.win.add([pdos_col, markers_col])
         
-        # Cutoff - compact
-        self.cutoff_entry = ui.Entry('', width=15)
-        self.win.add([ui.Label(_('DOS Cutoff:')), self.cutoff_entry])
+        # Attach context menus after window is shown
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(100, self._attach_all_context_menus)
         
         # --- Color Scheme Section ---
         self.win.add(_('Color Scheme:'))
@@ -503,7 +541,7 @@ class DOSPlotter:
         
         # Title row
         self.show_title_check = ui.CheckButton(_('Title:'), True, None)
-        self.title_entry = ui.Entry(default_title, width=35)
+        self.title_entry = ui.Entry(default_title, width=34)
         self.win.add([self.show_title_check, self.title_entry, self.title_fontsize])
         
         # X-axis row
@@ -517,6 +555,11 @@ class DOSPlotter:
         self.ylabel_entry = ui.Entry('Density of States', width=17)
         ylim_label = ui.Label('  ylim:')
         self.win.add([self.show_ylabel_check, self.ylabel_entry, self.ylabel_fontsize, ylim_label, self.ylim_min, self.ylim_max])
+        
+        # Fill and Grid options
+        self.fill_check = ui.CheckButton(_('Fill under curves'), False, None)
+        self.grid_check = ui.CheckButton(_('Show grid'), False, None)
+        self.win.add([self.fill_check, self.grid_check])
         
         self.win.add(_(''))  # Empty line separator
         
@@ -640,7 +683,7 @@ class DOSPlotter:
             if hasattr(self, 'custom_marker_label_entry'):
                 connect_entry(self.custom_marker_label_entry)
             if hasattr(self, 'cutoff_entry'):
-                connect_entry(self.cutoff_entry)
+                connect_spinbox(self.cutoff_entry)
                 
         except Exception as e:
             import traceback
@@ -682,8 +725,11 @@ class DOSPlotter:
         try:
             self._plot_internal(auto_refresh=True)
         except Exception as e:
-            # Silently ignore errors during auto-refresh to avoid spamming
-            pass
+            # Log errors during auto-refresh for debugging, but don't show error dialogs
+            import traceback
+            print(f"Auto-refresh error: {e}")
+            traceback.print_exc()
+            # Don't close the window or show error dialogs during auto-refresh
     
     def _show_tooltip(self, event, text):
         """Show tooltip on hover."""
@@ -838,6 +884,19 @@ class DOSPlotter:
             ui.showerror(_('Error'), _('Directory does not exist.'))
             return
         
+        # Confirm before closing the current window
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            None,
+            _('Confirm Refresh'),
+            _('Refreshing will close this window and reopen with new data. Continue?'),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
         self.default_location = location
         self.pdos_files = None
         self.available_elements = []
@@ -939,15 +998,11 @@ class DOSPlotter:
                 custom_marker_label = f'Custom ({custom_marker:.2f} eV)'
         
         # Get cutoff
-        cutoff = None
-        cutoff_str = self.cutoff_entry.value.strip()
-        if cutoff_str:
-            try:
-                cutoff = float(cutoff_str)
-            except ValueError:
-                if not auto_refresh:
-                    ui.showerror(_('Error'), _('Invalid cutoff value.'))
-                return
+        cutoff = self.cutoff_entry.value
+        # Treat 0 (or close to 0) as disabled/no cutoff
+        if cutoff < 1e-6:
+            cutoff = None
+
         
         # Get color scheme
         color_scheme = self.color_scheme_var.value
@@ -1045,17 +1100,28 @@ class DOSPlotter:
                     pass
                 
         except Exception as e:
+            import traceback
+            print("\n" + "="*60)
+            print(f"ERROR in _plot_internal (auto_refresh={auto_refresh}):")
+            print(f"Exception: {e}")
+            traceback.print_exc()
+            print("="*60 + "\n")
             if not auto_refresh:
                 ui.showerror(_('Error'), 
                             _('Error plotting DOS:\n\n') + str(e))
-                import traceback
-                traceback.print_exc()
     
     def close(self):
         """Close the dialog."""
+        import traceback
+        print("\n" + "="*60)
+        print("DOSPlotter.close() called")
+        print("Stack trace:")
+        traceback.print_stack()
+        print("="*60 + "\n")
         self.win.close()
 
 
 def dos_plot_window(gui):
     """Create and show DOS plotting window."""
-    DOSPlotter(gui)
+    # Store reference to prevent garbage collection
+    gui.dos_plotter = DOSPlotter(gui)

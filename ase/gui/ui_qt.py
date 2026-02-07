@@ -228,6 +228,9 @@ class Row(Widget):
         self._frame = QWidget(parent_widget)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        # Reduce default spacing and keep children left-aligned to avoid large gaps
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignLeft)
         self._frame.setLayout(layout)
         
         for thing in self.things:
@@ -251,6 +254,9 @@ class Label(Widget):
 
     def _create_label(self, parent):
         lbl = QLabel(self._text, parent)
+        # Prevent the label from expanding and creating a large gap
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lbl.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         if self._color:
             lbl.setStyleSheet(f"color: {self._color};")
         return lbl

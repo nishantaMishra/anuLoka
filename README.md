@@ -54,9 +54,9 @@ python3 -m ase -T gui /path/to/your/directory/or/file.
 - DOS toolbar button to plot DOS. (expects native vaspkit installation)
 - Opening directories in workspace mode.
 - Drag and drop files to open them.
-
+- Potential plotting function.
 
 # To do
 - Better UI or DOS popup window. Selection of suborbitals is still kind of confusing. Now way to know if any suborbital is selected or not.
 - Band structure plots.
-- Potential plotting function.
+
